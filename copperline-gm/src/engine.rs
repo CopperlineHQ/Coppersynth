@@ -23,8 +23,8 @@ pub struct GmEngine {
 impl GmEngine {
     /// Open a soundfont and build the engine at `sample_rate`.
     pub fn open(soundfont: &Path, sample_rate: u32, mode: Mt32Mode) -> Result<Self, String> {
-        let mut file = File::open(soundfont)
-            .map_err(|e| format!("opening {}: {e}", soundfont.display()))?;
+        let mut file =
+            File::open(soundfont).map_err(|e| format!("opening {}: {e}", soundfont.display()))?;
         let font = SoundFont::new(&mut file)
             .map_err(|e| format!("reading {}: {e}", soundfont.display()))?;
         Self::from_font(Arc::new(font), sample_rate, mode)
