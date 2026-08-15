@@ -25,8 +25,18 @@ impl GmEngine {
     pub fn open(soundfont: &Path, sample_rate: u32, mode: Mt32Mode) -> Result<Self, String> {
         let mut file =
             File::open(soundfont).map_err(|e| format!("opening {}: {e}", soundfont.display()))?;
-        let font = SoundFont::new(&mut file)
-            .map_err(|e| format!("reading {}: {e}", soundfont.display()))?;
+        Self::open_reader(&mut file, sample_rate, mode)
+            .map_err(|e| format!("{}: {e}", soundfont.display()))
+    }
+
+    /// Open a soundfont from any byte stream: a file, or a host's
+    /// decompressor -- how the bank arrives is the host's business.
+    pub fn open_reader<R: std::io::Read>(
+        reader: &mut R,
+        sample_rate: u32,
+        mode: Mt32Mode,
+    ) -> Result<Self, String> {
+        let font = SoundFont::new(reader).map_err(|e| e.to_string())?;
         Self::from_font(Arc::new(font), sample_rate, mode)
     }
 
