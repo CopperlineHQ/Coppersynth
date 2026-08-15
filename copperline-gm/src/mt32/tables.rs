@@ -282,97 +282,99 @@ pub const PRESET_NAMES: [&str; 128] = [
 
 /// Sierra's own GM choices for their custom timbres, by the 10-column
 /// name a game uploads to timbre memory: (name, GM program, key shift,
-/// volume adjustment). Merged across the three recovered banks by
-/// majority. The name matcher trims both sides, so \"Explode \" and
-/// \"Explode\" meet.
+/// volume adjustment). The instrument is voted across the three
+/// recovered banks; the shift and volume come from LB2 alone, whose
+/// VolA column is a signed adjustment -- the two older banks store an
+/// absolute part volume under the same header, which is not a delta and
+/// must not be applied as one.
 pub const CUSTOM_NAME_TO_GM: [(&str, u8, i8, i8); 91] = [
-    ("ANALOG SYN", 90, 0, 127),
+    ("ANALOG SYN", 90, 0, 0),
     ("Arena2  MS", 126, 0, 0),
     ("ArenaNoSus", 126, 0, 0),
     ("Armor   MS", 113, 12, -20),
-    ("BIG BANJO", 98, 0, -10),
+    ("BIG BANJO", 98, 0, 0),
     ("BIG TOMS", 116, 0, 0),
     ("BanjoLB2", 105, 0, -20),
     ("BassPizzMS", 45, -12, 0),
     ("Bell Tree", 9, 0, 0),
-    ("Bells   MS", 112, 12, 80),
+    ("Bells   MS", 112, 0, 0),
     ("Boing   MS", 116, 0, 0),
     ("CLICKS", 115, 0, 0),
     ("CabEngine", 66, -60, 50),
     ("Calliope", 16, 0, 0),
-    ("Chicago MS", 1, 0, 30),
+    ("Chicago MS", 1, 0, 0),
     ("ChurchB MS", 14, 0, 0),
     ("ClarinetMS", 71, 0, -20),
     ("Claw    MS", 118, 0, 0),
     ("Conga   MS", 116, 0, 0),
     ("CracklesMS", 115, 0, 0),
-    ("Crash   MS", 127, 0, 127),
+    ("Crash   MS", 127, 0, 0),
     ("Cricket", 120, 0, 0),
-    ("CstlGateMS", 127, -50, 50),
+    ("CstlGateMS", 127, 0, 0),
     ("CymSwellMS", 119, 0, 0),
     ("DoorSlamMS", 115, -12, 0),
     ("ElecGtr MS", 27, 0, 0),
-    ("EnglHornMS", 69, 12, 40),
+    ("EnglHornMS", 69, 0, 0),
     ("Explode MS", 127, -12, -15),
     ("F VoxStrg", 48, 0, 0),
-    ("FEEDBAK AX", 30, -12, 65),
-    ("FUNK PING", 46, 27, -10),
+    ("FEEDBAK AX", 30, 0, 0),
+    ("FUNK PING", 46, 0, 0),
     ("Fantasy2MS", 88, 0, 10),
-    ("FireDartMS", 122, 0, 120),
-    ("Flame2  MS", 121, 0, 100),
+    ("FireDartMS", 122, 0, 0),
+    ("Flame2  MS", 121, 0, 0),
     ("Flames  MS", 121, 0, 0),
-    ("Flames3 MS", 125, 0, 80),
-    ("Flute   MS", 73, 0, 45),
-    ("FrHorn1 MS", 60, 0, 40),
+    ("Flames3 MS", 125, 0, 0),
+    ("Flute   MS", 73, 0, 0),
+    ("FrHorn1 MS", 60, 0, 0),
     ("FrHorn1MS2", 60, 0, 0),
     ("GameSnd MS", 80, 0, 0),
     ("Glock   MS", 9, 0, 0),
     ("Gun     MS", 127, 0, 0),
-    ("HEFTY BASS", 33, -24, 100),
+    ("HEFTY BASS", 33, 0, 0),
     ("Horse1  MS", 115, 0, 0),
     ("Horse2  MS", 115, 0, 0),
     ("InHale  MS", 121, 0, 25),
-    ("Kiss    MS", 127, 100, 0),
-    ("KnifeStkMS", 115, 0, 110),
-    ("LUSH STRNG", 48, 0, 117),
-    ("Laser   MS", 81, 0, -40),
-    ("LghtboltMS", 122, 0, 120),
+    ("Kiss    MS", 127, 0, 0),
+    ("KnifeStkMS", 115, 0, 0),
+    ("LUSH STRNG", 48, 0, 0),
+    ("Laser   MS", 81, 0, 0),
+    ("LghtboltMS", 122, 0, 0),
     ("Lock    MS", 115, 0, 0),
     ("NewSplatMS", 117, 0, 0),
-    ("Ninga   MS", 121, 0, 100),
-    ("ORGAN B", 16, 0, 55),
+    ("Ninga   MS", 121, 0, 0),
+    ("ORGAN B", 16, 0, 0),
     ("Oboe    MS", 68, 0, -20),
-    ("Owl     MS", 123, -12, 0),
-    ("Pft     MS", 125, 0, 110),
+    ("Owl     MS", 123, 0, 0),
+    ("Pft     MS", 125, 0, 0),
     ("Pizz    MS", 45, 0, 0),
-    ("Punch   MS", 118, 0, 80),
+    ("Punch   MS", 118, 0, 0),
     ("REV CYMBAL", 119, 0, 0),
-    ("ROCK GUIT1", 30, -12, 127),
+    ("ROCK GUIT1", 30, 0, 0),
     ("Raspbry MS", 81, 0, 0),
     ("RatSqueek", 120, 12, 0),
     ("RimShot MS", 115, 0, 0),
-    ("STACKBASS", 37, -12, 100),
+    ("STACKBASS", 37, 0, 0),
     ("Scrubin'MS", 119, 0, 0),
     ("Skid    MS", 125, 0, 0),
-    ("SmileFacMS", 125, 0, 40),
+    ("SmileFacMS", 125, 0, 0),
     ("Snare", 115, 0, 0),
     ("Snare   MS", 116, 0, 0),
     ("SpaceVibes", 11, 0, 0),
-    ("Spit    MS", 115, -12, 0),
+    ("Spit    MS", 115, 0, 0),
     ("Splat   MS", 118, 0, 0),
     ("SqurWaveMS", 80, 0, 0),
     ("StoneDr MS", 119, -48, 0),
-    ("StrSect1MS", 48, 0, 127),
+    ("StrSect1MS", 48, 0, 20),
     ("SwmpBackgr", 120, 0, 0),
-    ("T-Bone2 MS", 57, 0, 65),
+    ("T-Bone2 MS", 57, 0, 0),
     ("TRAFFIC", 122, 0, 0),
     ("Taiko", 116, 12, -10),
     ("Thud    MS", 116, -12, 0),
-    ("Thunder MS", 125, -12, 100),
-    ("TireSqueal", 109, 0, 25),
+    ("Thunder MS", 125, 0, 0),
+    ("TireSqueal", 109, 0, 0),
     ("Toms    MS", 117, 0, 0),
-    ("Tumble  MS", 118, 0, 40),
-    ("Vase    MS", 127, -12, 0),
+    ("Tumble  MS", 118, 0, 0),
+    ("Vase    MS", 127, 0, 0),
     ("WarmPadStr", 49, 0, 15),
     ("Window", 119, -48, 0),
     ("WoodBlox", 115, 0, 0),
@@ -430,6 +432,40 @@ mod tests {
         let (_, gm, _, _) = find("Explode MS").expect("LB2's explosion");
         assert_eq!(gm, 127, "an explosion is a gunshot in GM");
         assert!(find("SqurWaveMS").is_some(), "the square lead");
+    }
+
+    /// The volume column is only a delta in the LB2 bank; the older two
+    /// store an absolute part volume under the same header. Regenerating
+    /// with the wrong rule slams every string note to full velocity.
+    #[test]
+    fn custom_adjustments_are_lb2_deltas_not_absolute_volumes() {
+        let strings = CUSTOM_NAME_TO_GM
+            .iter()
+            .find(|(n, ..)| n.trim() == "StrSect1MS")
+            .unwrap();
+        assert_eq!(
+            (strings.1, strings.3),
+            (48, 20),
+            "LB2 says +20, QFG1's 127 is not a delta"
+        );
+        for &(name, _, _, vol) in CUSTOM_NAME_TO_GM.iter() {
+            assert!(
+                (-60..=60).contains(&(vol as i32)),
+                "{name:?}: {vol} is no adjustment"
+            );
+        }
+    }
+
+    /// A nature effect with no name match lands in its sound class, not
+    /// on a square lead.
+    #[test]
+    fn effect_names_fall_into_sound_classes() {
+        assert_eq!(match_custom_name(b"Wind    MS").0, 122);
+        assert_eq!(match_custom_name(b"Ocean   MS").0, 122);
+        assert_eq!(match_custom_name(b"SomeBirdMS").0, 123);
+        assert_eq!(match_custom_name(b"snore     ").0, 121);
+        // And a name that is genuinely nothing still gets the lead.
+        assert_eq!(match_custom_name(b"Zzyzx     ").0, 80);
     }
 
     #[test]
@@ -544,12 +580,38 @@ pub fn match_custom_name(name: &[u8; 10]) -> (u8, i8, i8) {
         if uploaded
             .windows(p.len().min(uploaded.len()))
             .any(|w| w == &p[..])
-            && preset_best.is_none_or(|(b, _)| p.len() > b) {
-                preset_best = Some((p.len(), PATCH_TO_GM[i]));
-            }
+            && preset_best.is_none_or(|(b, _)| p.len() > b)
+        {
+            preset_best = Some((p.len(), PATCH_TO_GM[i]));
+        }
     }
-    match preset_best {
-        Some((_, gm)) => (gm, 0, 0),
-        None => (80, 0, 0),
+    if let Some((_, gm)) = preset_best {
+        return (gm, 0, 0);
     }
+    // Sound-effect names that match nothing by spelling still say what
+    // they are. The classes and their GM stand-ins follow Sierra's own
+    // choices where they made one (water to Seashore, birds to Bird
+    // Tweet, breathy noise to Breath Noise, thumps to Taiko); a square
+    // lead for "Wind" would be wrong in a way a listener notices.
+    const CLASSES: [(&[&str], u8); 4] = [
+        (
+            &[
+                "wind", "ocean", "water", "wtr", "splash", "drip", "rain", "sea", "wave",
+            ],
+            122,
+        ),
+        (&["bird", "chirp", "whip", "duck", "gull"], 123),
+        (&["snore", "breath", "inhale", "poof", "pft", "steam"], 121),
+        (&["thud", "stomp", "quake", "rumble"], 116),
+    ];
+    for (words, gm) in CLASSES {
+        if words.iter().any(|w| {
+            uploaded
+                .windows(w.len().min(uploaded.len()))
+                .any(|win| win == w.as_bytes())
+        }) {
+            return (gm, 0, 0);
+        }
+    }
+    (80, 0, 0)
 }
