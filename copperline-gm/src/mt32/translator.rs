@@ -367,7 +367,7 @@ impl Mt32Translator {
             let addr = ((body[4] as u32) << 14) | ((body[5] as u32) << 7) | body[6] as u32;
             let data = &body[7..body.len() - 1];
             let sum: u32 = body[4..].iter().map(|&b| b as u32).sum();
-            if sum % 128 != 0 {
+            if !sum.is_multiple_of(128) {
                 // A corrupt write is dropped whole; guessing at half a
                 // patch table would be worse than missing it.
                 return;
@@ -387,7 +387,7 @@ impl Mt32Translator {
         const SYSTEM: u32 = 0x10 << 14;
         const DISPLAY: u32 = 0x20 << 14;
 
-        if addr >= DISPLAY && addr < DISPLAY + 0x80 {
+        if (DISPLAY..DISPLAY + 0x80).contains(&addr) {
             let text: String = data
                 .iter()
                 .map(|&b| {
@@ -408,14 +408,14 @@ impl Mt32Translator {
         for (i, &value) in data.iter().enumerate() {
             let at = addr + i as u32;
             match at {
-                a if a >= TIMBRE_MEMORY && a < TIMBRE_MEMORY + 64 * 256 => {
+                a if (TIMBRE_MEMORY..TIMBRE_MEMORY + 64 * 256).contains(&a) => {
                     let offset = a - TIMBRE_MEMORY;
                     let (slot, byte) = ((offset / 256) as usize, offset % 256);
                     if byte < 10 {
                         self.timbre_names[slot][byte as usize] = value;
                     }
                 }
-                a if a >= PATCH_MEMORY && a < PATCH_MEMORY + 128 * 8 => {
+                a if (PATCH_MEMORY..PATCH_MEMORY + 128 * 8).contains(&a) => {
                     let offset = a - PATCH_MEMORY;
                     let (slot, byte) = ((offset / 8) as usize, offset % 8);
                     let p = &mut self.patches[slot];
@@ -427,14 +427,14 @@ impl Mt32Translator {
                         _ => {}
                     }
                 }
-                a if a >= RHYTHM_SETUP && a < RHYTHM_SETUP + 64 * 4 => {
+                a if (RHYTHM_SETUP..RHYTHM_SETUP + 64 * 4).contains(&a) => {
                     let offset = a - RHYTHM_SETUP;
                     let (key, byte) = ((offset / 4) as usize, offset % 4);
                     if byte == 0 {
                         self.rhythm_assign[key] = Some(value);
                     }
                 }
-                a if a >= PATCH_TEMP && a < PATCH_TEMP + 8 * 16 => {
+                a if (PATCH_TEMP..PATCH_TEMP + 8 * 16).contains(&a) => {
                     // A game writing a part's live patch skips patch
                     // memory entirely; retarget the part on the spot.
                     let offset = a - PATCH_TEMP;
@@ -456,7 +456,7 @@ impl Mt32Translator {
                         self.on_program_from_temp(channel, slot);
                     }
                 }
-                a if a >= SYSTEM && a < SYSTEM + 0x20 => {
+                a if (SYSTEM..SYSTEM + 0x20).contains(&a) => {
                     let offset = a - SYSTEM;
                     if (0x0D..=0x15).contains(&offset) {
                         let part = (offset - 0x0D) as usize;

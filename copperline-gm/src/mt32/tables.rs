@@ -528,7 +528,7 @@ pub fn match_custom_name(name: &[u8; 10]) -> (u8, i8, i8) {
         } else {
             continue;
         };
-        if best.map_or(true, |(b, _)| score > b) {
+        if best.is_none_or(|(b, _)| score > b) {
             best = Some((score, (gm, ksh, vol)));
         }
     }
@@ -544,11 +544,9 @@ pub fn match_custom_name(name: &[u8; 10]) -> (u8, i8, i8) {
         if uploaded
             .windows(p.len().min(uploaded.len()))
             .any(|w| w == &p[..])
-        {
-            if preset_best.map_or(true, |(b, _)| p.len() > b) {
+            && preset_best.is_none_or(|(b, _)| p.len() > b) {
                 preset_best = Some((p.len(), PATCH_TO_GM[i]));
             }
-        }
     }
     match preset_best {
         Some((_, gm)) => (gm, 0, 0),
