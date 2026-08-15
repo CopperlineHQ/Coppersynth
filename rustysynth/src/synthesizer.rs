@@ -39,6 +39,10 @@ pub struct Synthesizer {
     block_read: usize,
 
     master_volume: f32,
+    /// The unit's REVERB/CHORUS "of ALL" levels: gains on the effect
+    /// returns, 1.0 at the factory setting.
+    master_reverb_gain: f32,
+    master_chorus_gain: f32,
 
     effects: Option<Effects>,
 }
@@ -119,6 +123,8 @@ impl Synthesizer {
             inverse_block_size,
             block_read,
             master_volume,
+            master_reverb_gain: 1.0_f32,
+            master_chorus_gain: 1.0_f32,
             effects,
         })
     }
@@ -427,12 +433,12 @@ impl Synthesizer {
                 chorus_output_right,
             );
             ArrayMath::multiply_add(
-                self.master_volume,
+                self.master_volume * self.master_chorus_gain,
                 chorus_output_left,
                 &mut self.block_left[..],
             );
             ArrayMath::multiply_add(
-                self.master_volume,
+                self.master_volume * self.master_chorus_gain,
                 chorus_output_right,
                 &mut self.block_right[..],
             );
@@ -460,12 +466,12 @@ impl Synthesizer {
 
             reverb.process(reverb_input, reverb_output_left, reverb_output_right);
             ArrayMath::multiply_add(
-                self.master_volume,
+                self.master_volume * self.master_reverb_gain,
                 reverb_output_left,
                 &mut self.block_left[..],
             );
             ArrayMath::multiply_add(
-                self.master_volume,
+                self.master_volume * self.master_reverb_gain,
                 reverb_output_right,
                 &mut self.block_right[..],
             );
@@ -519,7 +525,10 @@ impl Synthesizer {
     /// Gets the bank and patch numbers channel `channel` last selected.
     pub fn channel_bank_patch(&self, channel: usize) -> Option<(i32, i32)> {
         let channel_info = self.channels.get(channel)?;
-        Some((channel_info.get_bank_number(), channel_info.get_patch_number()))
+        Some((
+            channel_info.get_bank_number(),
+            channel_info.get_patch_number(),
+        ))
     }
 
     /// Gets the raw value of controller `controller` on `channel`.
@@ -561,6 +570,26 @@ impl Synthesizer {
     /// * `value` - The new value of the master volume.
     pub fn set_master_volume(&mut self, value: f32) {
         self.master_volume = value;
+    }
+
+    /// Gets the gain applied to the reverb return.
+    pub fn get_master_reverb_gain(&self) -> f32 {
+        self.master_reverb_gain
+    }
+
+    /// Sets the gain applied to the reverb return.
+    pub fn set_master_reverb_gain(&mut self, value: f32) {
+        self.master_reverb_gain = value;
+    }
+
+    /// Gets the gain applied to the chorus return.
+    pub fn get_master_chorus_gain(&self) -> f32 {
+        self.master_chorus_gain
+    }
+
+    /// Sets the gain applied to the chorus return.
+    pub fn set_master_chorus_gain(&mut self, value: f32) {
+        self.master_chorus_gain = value;
     }
 }
 

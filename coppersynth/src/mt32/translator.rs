@@ -45,6 +45,9 @@ pub enum Event {
     Display(String),
     /// Universal sysex master volume, 0..=127.
     MasterVolume(u8),
+    /// A Sound Canvas dot picture for the bar-display matrix: sixteen
+    /// rows top to bottom, bit `c` of a row = the dot in column `c`.
+    Picture([u16; 16]),
     /// Auto mode decided: true once MT-32 traffic is identified.
     Translating(bool),
 }
@@ -397,8 +400,8 @@ impl Mt32Translator {
         }
         // Roland DT1 to a GS device (Sound Canvas class): 41 dev 42 12
         // aa bb cc data.. sum. Handled in every mode -- a GM bank plays
-        // Sound Canvas aware games with translation off, and their text
-        // should still reach the display.
+        // Sound Canvas aware games with translation off, and what they
+        // say should still reach the display.
         if body.len() >= 8 && body[0] == 0x41 && body[2] == 0x42 && body[3] == 0x12 {
             let addr = ((body[4] as u32) << 14) | ((body[5] as u32) << 7) | body[6] as u32;
             let data = &body[7..body.len() - 1];
@@ -407,6 +410,18 @@ impl Mt32Translator {
                 return;
             }
             self.on_gs_write(addr, data);
+            return;
+        }
+        // Model 45: the SC-55's own display -- letters, and dot pictures
+        // for the bar matrix.
+        if body.len() >= 8 && body[0] == 0x41 && body[2] == 0x45 && body[3] == 0x12 {
+            let addr = ((body[4] as u32) << 14) | ((body[5] as u32) << 7) | body[6] as u32;
+            let data = &body[7..body.len() - 1];
+            let sum: u32 = body[4..].iter().map(|&b| b as u32).sum();
+            if !sum.is_multiple_of(128) {
+                return;
+            }
+            self.on_display_write(addr, data);
             return;
         }
         // Roland DT1 to an MT-32: 41 dev 16 12 aa bb cc data.. sum.
@@ -431,12 +446,30 @@ impl Mt32Translator {
     }
 
     /// A write to the GS memory map: only what shows on a front panel
-    /// is modelled -- display text, master volume, and the reset that
-    /// says the traffic is Sound Canvas rather than MT-32.
+    /// is modelled -- master volume, and the reset that says the
+    /// traffic is Sound Canvas rather than MT-32.
     fn on_gs_write(&mut self, addr: u32, data: &[u8]) {
-        const DISPLAY: u32 = 0x10 << 14;
         const SYSTEM: u32 = 0x40 << 14;
-        if (DISPLAY..DISPLAY + 0x20).contains(&addr) {
+        match addr {
+            a if a == SYSTEM | 0x04 => {
+                if let Some(&v) = data.first() {
+                    self.events.push(Event::MasterVolume(v & 0x7F));
+                }
+            }
+            a if a == SYSTEM | 0x7F => self.leave_mt32(),
+            _ => {}
+        }
+    }
+
+    /// A write to the SC-55's display map (model 45): Displayed Letter
+    /// at 10 00 00 (1-32 ASCII bytes), Displayed Dot Data at 10 01 00
+    /// (64 bytes, five usable bits each, the manual's own layout: for
+    /// row r, byte 16g+r carries columns 5g..5g+4 in bits 4..0, and the
+    /// fourth group's bit 4 alone is column 15).
+    fn on_display_write(&mut self, addr: u32, data: &[u8]) {
+        const LETTER: u32 = 0x10 << 14;
+        const DOTS: u32 = (0x10 << 14) | (0x01 << 7);
+        if (LETTER..LETTER + 0x20).contains(&addr) {
             let text: String = data
                 .iter()
                 .map(|&b| {
@@ -453,14 +486,20 @@ impl Mt32Translator {
             }
             return;
         }
-        match addr {
-            a if a == SYSTEM | 0x04 => {
-                if let Some(&v) = data.first() {
-                    self.events.push(Event::MasterVolume(v & 0x7F));
+        if addr == DOTS {
+            let mut rows = [0u16; 16];
+            for (r, row) in rows.iter_mut().enumerate() {
+                for g in 0..4 {
+                    let byte = data.get(16 * g + r).copied().unwrap_or(0);
+                    for k in 0..5 {
+                        let column = 5 * g + k;
+                        if column < 16 && byte & (1 << (4 - k)) != 0 {
+                            *row |= 1 << column;
+                        }
+                    }
                 }
             }
-            a if a == SYSTEM | 0x7F => self.leave_mt32(),
-            _ => {}
+            self.events.push(Event::Picture(rows));
         }
     }
 

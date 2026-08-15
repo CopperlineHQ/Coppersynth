@@ -16,6 +16,17 @@ use std::sync::Arc;
 use rustysynth::{SoundFont, Synthesizer, SynthesizerSettings};
 
 use crate::mt32::translator::{Event, Mt32Mode, Mt32Translator};
+use crate::panel::Feed;
+
+/// What the MUTE-and-ALL monitor is doing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Monitor {
+    Off,
+    /// Only this part sounds.
+    Solo(usize),
+    /// Everything sounds, mutes and all.
+    All,
+}
 
 /// How many parts the device has, which is also how many synthesizer
 /// channels there are to put them on.
@@ -86,11 +97,31 @@ pub struct GmEngine {
     parts: Parts,
     /// Display text from MT-32 or GS sysex, kept for the host.
     display: Vec<String>,
+    /// Letters and pictures on their way to the front panel.
+    panel_feed: Vec<Feed>,
     sample_rate: u32,
     /// The front panel's VOLUME knob: an analogue pot after the DAC, so
     /// it scales the output without touching the synth's own master
     /// volume, which sysex owns.
     output_gain: f32,
+    /// The mode the host configured, which is what an Init GS returns
+    /// to -- auto detection stays alive there.
+    configured_mode: Mt32Mode,
+    monitor: Monitor,
+    /// The master volume as the wire's 0..=127, mirrored raw so the
+    /// panel shows exactly what was asked for; the audible mapping puts
+    /// 127 at the engine's power-on gain.
+    master_volume_cc: u8,
+    /// The "of ALL" values behind the panel's master rows.
+    master_pan: u8,
+    master_shift: i8,
+    master_reverb_cc: u8,
+    master_chorus_cc: u8,
+    /// The sysex device ID, 1..=32, as the panel edits it. Reception
+    /// stays permissive -- games address whatever ID they like and a
+    /// lone unit on a private cable answers -- so this is what the
+    /// panel shows, not a filter.
+    device_id: u8,
 }
 
 impl GmEngine {
@@ -120,14 +151,25 @@ impl GmEngine {
     ) -> Result<Self, String> {
         let settings = SynthesizerSettings::new(sample_rate as i32);
         let synth = Synthesizer::new(&font, &settings).map_err(|e| e.to_string())?;
-        Ok(Self {
+        let mut engine = Self {
             synth,
             translator: Mt32Translator::new(mode),
             parts: Parts::new(),
             display: Vec::new(),
+            panel_feed: Vec::new(),
             sample_rate,
             output_gain: 1.0,
-        })
+            configured_mode: mode,
+            monitor: Monitor::Off,
+            master_volume_cc: 127,
+            master_pan: 64,
+            master_shift: 0,
+            master_reverb_cc: 64,
+            master_chorus_cc: 64,
+            device_id: 17,
+        };
+        engine.set_master_volume_cc(127);
+        Ok(engine)
     }
 
     pub fn sample_rate(&self) -> u32 {
@@ -153,11 +195,12 @@ impl GmEngine {
                     data1,
                     data2,
                 } => self.deliver(command, channel, data1, data2),
-                Event::MasterVolume(v) => {
-                    // 0..=127 mapped so the GM default (127) is unity.
-                    self.synth.set_master_volume(v as f32 / 127.0);
+                Event::MasterVolume(v) => self.set_master_volume_cc(v),
+                Event::Display(text) => {
+                    self.panel_feed.push(Feed::Text(text.clone()));
+                    self.display.push(text);
                 }
-                Event::Display(text) => self.display.push(text),
+                Event::Picture(rows) => self.panel_feed.push(Feed::Picture(rows)),
                 Event::Translating(_) => {}
             }
         }
@@ -172,7 +215,12 @@ impl GmEngine {
             }
             match command {
                 0x90 if data2 > 0 => {
-                    if self.parts.mute[part] {
+                    let gated = match self.monitor {
+                        Monitor::All => false,
+                        Monitor::Solo(solo) => part != solo,
+                        Monitor::Off => self.parts.mute[part],
+                    };
+                    if gated {
                         continue;
                     }
                     let key = self.shifted_key(part, data1);
@@ -184,8 +232,12 @@ impl GmEngine {
                     let sounded = &mut self.parts.sounded[part][data1 as usize];
                     let key = std::mem::replace(sounded, SILENT);
                     if key != SILENT {
-                        self.synth
-                            .process_midi_message(part as i32, 0x80, key as i32, data2 as i32);
+                        self.synth.process_midi_message(
+                            part as i32,
+                            0x80,
+                            key as i32,
+                            data2 as i32,
+                        );
                     }
                 }
                 _ => self.synth.process_midi_message(
@@ -205,7 +257,8 @@ impl GmEngine {
         if part == DRUM_PART {
             return key;
         }
-        (key as i16 + self.parts.key_shift[part] as i16).clamp(0, 127) as u8
+        (key as i16 + self.parts.key_shift[part] as i16 + self.master_shift as i16).clamp(0, 127)
+            as u8
     }
 
     /// Render the next `frames.len()` stereo frames.
@@ -217,15 +270,25 @@ impl GmEngine {
         let mut left = vec![0f32; n];
         let mut right = vec![0f32; n];
         self.synth.render(&mut left, &mut right);
+        // The knob, then the master pan: a balance that leaves the
+        // centre untouched and fades the far side out.
+        let towards_right = (self.master_pan as f32 - 1.0) / 126.0;
+        let pan_l = ((1.0 - towards_right) * 2.0).min(1.0);
+        let pan_r = (towards_right * 2.0).min(1.0);
         let gain = self.output_gain;
         for (i, frame) in frames.iter_mut().enumerate() {
-            *frame = (left[i] * gain, right[i] * gain);
+            *frame = (left[i] * gain * pan_l, right[i] * gain * pan_r);
         }
     }
 
     /// Display lines received since the last call, oldest first.
     pub fn take_display(&mut self) -> Vec<String> {
         std::mem::take(&mut self.display)
+    }
+
+    /// Letters and pictures for the front panel, oldest first.
+    pub fn take_panel_feed(&mut self) -> Vec<Feed> {
+        std::mem::take(&mut self.panel_feed)
     }
 
     /// Silence everything without dropping the soundfont.
@@ -364,5 +427,120 @@ impl GmEngine {
         for sounded in &mut self.parts.sounded {
             *sounded = [SILENT; 128];
         }
+    }
+
+    // --- the masters the panel's ALL mode turns --------------------------
+
+    /// Master volume as the wire's 0..=127. The audible mapping puts
+    /// 127 at the engine's power-on gain, so the display, the sysex and
+    /// the sound all agree.
+    pub fn master_volume_cc(&self) -> u8 {
+        self.master_volume_cc
+    }
+
+    pub fn set_master_volume_cc(&mut self, value: u8) {
+        self.master_volume_cc = value.min(127);
+        self.synth
+            .set_master_volume(self.master_volume_cc as f32 / 127.0 * 0.5);
+    }
+
+    /// Master pan, 1..=127 around a centre of 64. It is a balance on
+    /// the mix, matching the knob's place in the chain.
+    pub fn master_pan(&self) -> u8 {
+        self.master_pan
+    }
+
+    pub fn set_master_pan(&mut self, value: u8) {
+        self.master_pan = value.clamp(1, 127);
+    }
+
+    /// Master key shift, +/-24 semitones on every part but the drums.
+    pub fn master_key_shift(&self) -> i8 {
+        self.master_shift
+    }
+
+    pub fn set_master_key_shift(&mut self, semitones: i8) {
+        self.master_shift = semitones.clamp(-24, 24);
+    }
+
+    /// The reverb return level, 0..=127 with the factory 64 as unity.
+    pub fn master_reverb(&self) -> u8 {
+        self.master_reverb_cc
+    }
+
+    pub fn set_master_reverb(&mut self, value: u8) {
+        self.master_reverb_cc = value.min(127);
+        self.synth
+            .set_master_reverb_gain(self.master_reverb_cc as f32 / 64.0);
+    }
+
+    /// The chorus return level, likewise.
+    pub fn master_chorus(&self) -> u8 {
+        self.master_chorus_cc
+    }
+
+    pub fn set_master_chorus(&mut self, value: u8) {
+        self.master_chorus_cc = value.min(127);
+        self.synth
+            .set_master_chorus_gain(self.master_chorus_cc as f32 / 64.0);
+    }
+
+    /// The sysex device ID the panel shows, 1..=32.
+    pub fn device_id(&self) -> u8 {
+        self.device_id
+    }
+
+    pub fn set_device_id(&mut self, id: u8) {
+        self.device_id = id.clamp(1, 32);
+    }
+
+    /// The ALL-and-MUTE monitor.
+    pub fn monitor(&self) -> Monitor {
+        self.monitor
+    }
+
+    pub fn set_monitor(&mut self, monitor: Monitor) {
+        self.monitor = monitor;
+        if let Monitor::Solo(solo) = monitor {
+            // Everyone else falls silent now; they come back when the
+            // monitor is let go and their own notes next arrive.
+            for part in 0..PARTS {
+                if part != solo {
+                    self.synth.note_off_all_channel(part as i32, false);
+                    self.parts.sounded[part] = [SILENT; 128];
+                }
+            }
+        }
+    }
+
+    // --- the power-on initialisations ------------------------------------
+
+    /// Init GS: back to the GS standard state, in the mode the host
+    /// configured -- auto detection is this engine's GS standard.
+    pub fn init_gs(&mut self) {
+        self.translator = Mt32Translator::new(self.configured_mode);
+        self.reset_to_defaults();
+    }
+
+    /// Init MT-32: the unit rearranged as an MT-32 -- translation on,
+    /// whatever the host configured, and the manual's reverb on every
+    /// part. A power cycle restores the configuration.
+    pub fn init_mt32(&mut self) {
+        self.translator = Mt32Translator::new(Mt32Mode::On);
+        self.reset_to_defaults();
+        for part in 0..PARTS {
+            self.set_part_reverb(part, 64);
+        }
+    }
+
+    fn reset_to_defaults(&mut self) {
+        self.synth.reset();
+        self.parts = Parts::new();
+        self.monitor = Monitor::Off;
+        self.set_master_volume_cc(127);
+        self.master_pan = 64;
+        self.master_shift = 0;
+        self.set_master_reverb(64);
+        self.set_master_chorus(64);
     }
 }
