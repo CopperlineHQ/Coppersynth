@@ -153,6 +153,24 @@ fn an_unknown_custom_name_lands_on_a_preset_by_substring() {
     assert!(out.contains(&midi(0xC0, 3, horn, 0)), "{out:?}");
 }
 
+/// The rhythm part ignores program changes, as the hardware does; on a
+/// GM synth they would select drum kits the game never chose. Found by
+/// the KQ5 intro capture, which sends five of them.
+#[test]
+fn rhythm_channel_program_changes_are_consumed() {
+    let mut t = Mt32Translator::new(Mt32Mode::On);
+    let _: Vec<Event> = t.push(0xF8).collect();
+    let out = push_all(&mut t, &[0xC9, 7]);
+    assert!(
+        !out.iter()
+            .any(|e| matches!(e, Event::Midi { command: 0xC0, .. })),
+        "{out:?}"
+    );
+    // And the kit still sounds afterwards.
+    let out = push_all(&mut t, &[0x99, 38, 100]);
+    assert!(out.contains(&midi(0x90, 9, 38, 100)));
+}
+
 #[test]
 fn rhythm_notes_pass_inside_the_kit_and_drop_outside() {
     let mut t = Mt32Translator::new(Mt32Mode::On);

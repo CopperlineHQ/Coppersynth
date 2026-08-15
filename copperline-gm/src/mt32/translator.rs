@@ -223,6 +223,12 @@ impl Mt32Translator {
         let rhythm = channel == self.part_channel[8];
         match command {
             0x90 | 0x80 => self.on_note(command, channel, d1, d2, rhythm),
+            // The MT-32's rhythm part ignores program changes, so a game
+            // may send them freely -- King's Quest V does. On a GM synth
+            // the percussion channel treats a program change as a drum-kit
+            // selection, so passing one through flips kits the game never
+            // chose. Consumed, exactly as the hardware consumes them.
+            0xC0 if rhythm => {}
             0xC0 => self.on_program(channel, d1),
             0xB0 => match d1 {
                 // The MT-32 pans the opposite way to the MIDI spec.

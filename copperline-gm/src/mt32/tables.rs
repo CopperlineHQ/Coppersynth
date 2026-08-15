@@ -460,6 +460,16 @@ mod tests {
     /// on a square lead.
     #[test]
     fn effect_names_fall_into_sound_classes() {
+        assert_eq!(
+            match_custom_name(b"HStrSectMS").0,
+            48,
+            "high strings are strings"
+        );
+        assert_eq!(
+            match_custom_name(b"Clap    MS").0,
+            115,
+            "one clap is a transient, not applause"
+        );
         assert_eq!(match_custom_name(b"Wind    MS").0, 122);
         assert_eq!(match_custom_name(b"Ocean   MS").0, 122);
         assert_eq!(match_custom_name(b"SomeBirdMS").0, 123);
@@ -593,7 +603,8 @@ pub fn match_custom_name(name: &[u8; 10]) -> (u8, i8, i8) {
     // choices where they made one (water to Seashore, birds to Bird
     // Tweet, breathy noise to Breath Noise, thumps to Taiko); a square
     // lead for "Wind" would be wrong in a way a listener notices.
-    const CLASSES: [(&[&str], u8); 4] = [
+    const CLASSES: [(&[&str], u8); 6] = [
+        (&["strsect", "string"], 48),
         (
             &[
                 "wind", "ocean", "water", "wtr", "splash", "drip", "rain", "sea", "wave",
@@ -603,6 +614,10 @@ pub fn match_custom_name(name: &[u8; 10]) -> (u8, i8, i8) {
         (&["bird", "chirp", "whip", "duck", "gull"], 123),
         (&["snore", "breath", "inhale", "poof", "pft", "steam"], 121),
         (&["thud", "stomp", "quake", "rumble"], 116),
+        // Dry percussive one-shots go where Sierra themselves put theirs
+        // (DoorSlam and hoofbeats landed on Woodblock): a single clap is
+        // a transient, not an audience.
+        (&["clap", "knock", "slam", "tap"], 115),
     ];
     for (words, gm) in CLASSES {
         if words.iter().any(|w| {
