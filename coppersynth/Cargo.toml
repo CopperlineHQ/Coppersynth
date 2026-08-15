@@ -1,0 +1,9 @@
+[package]
+name = "coppersynth"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Coppersynth: Copperline's General MIDI engine -- rustysynth with an MT-32 translation layer"
+
+[dependencies]
+rustysynth = { path = "../rustysynth" }

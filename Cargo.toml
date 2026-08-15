@@ -4,7 +4,7 @@ members = [
     "example",
     "rustysynth",
     "rustysynth_test",
-    "copperline-gm",
+    "coppersynth",
 ]
 
 resolver = "2"

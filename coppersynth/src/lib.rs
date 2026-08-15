@@ -8,7 +8,7 @@ pub mod mt32;
 /// The engine's own version, for logs and About lines.
 pub fn version() -> String {
     format!(
-        "copperline-gm {} (rustysynth {} fork)",
+        "Coppersynth {} (rustysynth {} fork)",
         env!("CARGO_PKG_VERSION"),
         "1.3.6"
     )
