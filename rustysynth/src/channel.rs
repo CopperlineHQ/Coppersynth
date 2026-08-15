@@ -31,6 +31,12 @@ pub(crate) struct Channel {
 
     pitch_bend: f32,
 
+    /// Every controller's last raw value, for the modulator sources. The
+    /// named fields above stay authoritative for the synthesizer's own
+    /// paths; this table answers for the arbitrary CCs a bank is free to
+    /// route from.
+    cc: [u8; 128],
+
     last_data_type: DataType,
 }
 
@@ -52,6 +58,7 @@ impl Channel {
             coarse_tune: 0,
             fine_tune: 0,
             pitch_bend: 0_f32,
+            cc: [0; 128],
             last_data_type: DataType::None,
         };
 
@@ -79,6 +86,15 @@ impl Channel {
         self.fine_tune = 8192;
 
         self.pitch_bend = 0_f32;
+
+        // The raw table mirrors the named defaults above, so a modulator
+        // reading CC7 before any controller arrives sees the same state
+        // the synthesizer's own volume path uses.
+        self.cc = [0; 128];
+        self.cc[7] = 100;
+        self.cc[10] = 64;
+        self.cc[11] = 127;
+        self.cc[91] = 40;
     }
 
     pub(crate) fn reset_all_controllers(&mut self) {
@@ -89,6 +105,10 @@ impl Channel {
         self.rpn = -1;
 
         self.pitch_bend = 0_f32;
+
+        self.cc[1] = 0;
+        self.cc[11] = 127;
+        self.cc[64] = 0;
     }
 
     pub(crate) fn set_bank(&mut self, value: i32) {
@@ -201,6 +221,27 @@ impl Channel {
 
     pub(crate) fn get_patch_number(&self) -> i32 {
         self.patch_number
+    }
+
+    /// Record a controller's raw value for the modulator sources. Called
+    /// for every incoming CC, named or not, before the switch that feeds
+    /// the named fields.
+    pub(crate) fn set_cc(&mut self, controller: i32, value: i32) {
+        if (0..128).contains(&controller) {
+            self.cc[controller as usize] = value as u8;
+        }
+    }
+
+    pub(crate) fn get_cc(&self, controller: u8) -> u8 {
+        self.cc[(controller & 0x7F) as usize]
+    }
+
+    /// The wheel's own position as 0..1 with 0.5 centred, for the
+    /// modulator sources -- [`get_pitch_bend`] bakes the range in, which
+    /// is the synthesizer's business, not a source's. `pitch_bend` is
+    /// kept as -1..1.
+    pub(crate) fn get_pitch_bend_raw(&self) -> f32 {
+        0.5_f32 * self.pitch_bend + 0.5_f32
     }
 
     pub(crate) fn get_modulation(&self) -> f32 {

@@ -141,8 +141,12 @@ impl Synthesizer {
         match command {
             0x80 => self.note_off(channel, data1),       // Note Off
             0x90 => self.note_on(channel, data1, data2), // Note On
-            0xB0 => match data1 // Controller
-            {
+            0xB0 => {
+                // The raw table first: modulators may route from any CC,
+                // named or not.
+                channel_info.set_cc(data1, data2);
+                match data1 // Controller
+                {
                 0x00 => channel_info.set_bank(data2), // Bank Selection
                 0x01 => channel_info.set_modulation_coarse(data2), // Modulation Coarse
                 0x21 => channel_info.set_modulation_fine(data2), // Modulation Fine
@@ -165,7 +169,8 @@ impl Synthesizer {
                 0x79 => self.reset_all_controllers_channel(channel), // Reset All Controllers
                 0x7B => self.note_off_all_channel(channel, false), // All Note Off
                 _ => (),
-            },
+                }
+            }
             0xC0 => channel_info.set_patch(data1), // Program Change
             0xE0 => channel_info.set_pitch_bend(data1, data2), // Pitch Bend
             _ => (),

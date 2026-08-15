@@ -12,11 +12,23 @@ use crate::volume_envelope::VolumeEnvelope;
 pub(crate) struct RegionEx {}
 
 impl RegionEx {
-    pub(crate) fn start_oscillator(oscillator: &mut Oscillator, region: &RegionPair) {
+    pub(crate) fn start_oscillator(
+        oscillator: &mut Oscillator,
+        region: &RegionPair,
+        start_offset: i32,
+    ) {
         let sample_rate = region.instrument.sample_sample_rate;
         let loop_mode = region.get_sample_modes();
-        let start = region.get_sample_start();
+        // The modulated offset moves the start point the generators chose;
+        // it must stay inside the sample's own data, so it is floored at
+        // the header's start (GeneralUser points generator starts past an
+        // attack transient and pulls them back by velocity).
+        let start = SoundFontMath::max(
+            (region.get_sample_start() + start_offset) as f32,
+            region.instrument.sample_start as f32,
+        ) as i32;
         let end = region.get_sample_end();
+        let start = start.min(end - 1);
         let start_loop = region.get_sample_start_loop();
         let end_loop = region.get_sample_end_loop();
         let root_key = region.get_root_key();
