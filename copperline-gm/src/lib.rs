@@ -2,4 +2,14 @@
 // API grow here. The synth core stays in the forked `rustysynth` crate so
 // changes there remain upstreamable.
 
+pub mod engine;
 pub mod mt32;
+
+/// The engine's own version, for logs and About lines.
+pub fn version() -> String {
+    format!(
+        "copperline-gm {} (rustysynth {} fork)",
+        env!("CARGO_PKG_VERSION"),
+        "1.3.6"
+    )
+}
