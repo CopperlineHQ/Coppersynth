@@ -71,7 +71,10 @@ fn layered_parts_both_sound() {
     send(&mut e, &[0x90, 60, 100]);
     render_rms(&mut e, 4410);
     let activity = e.part_activity();
-    assert!(activity[0] > 0.0 && activity[1] > 0.0, "both parts carry it");
+    assert!(
+        activity[0] > 0.0 && activity[1] > 0.0,
+        "both parts carry it"
+    );
 }
 
 /// Mute silences what is sounding and gates what arrives; unmuting lets
@@ -86,12 +89,21 @@ fn mute_gates_and_silences() {
     e.set_part_mute(0, true);
     // The release tail rings down; by half a second it is gone.
     render_rms(&mut e, 22_050);
-    assert!(render_rms(&mut e, 4410) < 0.0005, "muting silences the part");
+    assert!(
+        render_rms(&mut e, 4410) < 0.0005,
+        "muting silences the part"
+    );
     send(&mut e, &[0x90, 64, 100]);
-    assert!(render_rms(&mut e, 4410) < 0.0005, "a muted part gates notes");
+    assert!(
+        render_rms(&mut e, 4410) < 0.0005,
+        "a muted part gates notes"
+    );
     e.set_part_mute(0, false);
     send(&mut e, &[0x90, 64, 100]);
-    assert!(render_rms(&mut e, 4410) > 0.001, "unmuted, notes sound again");
+    assert!(
+        render_rms(&mut e, 4410) > 0.001,
+        "unmuted, notes sound again"
+    );
 }
 
 /// A note that went in shifted comes off cleanly even when the shift
@@ -198,10 +210,11 @@ fn gs_display_text_lands() {
     let Some(mut e) = engine(Mt32Mode::Off) else {
         return;
     };
-    // F0 41 10 42 12 10 00 00 "HI" sum F7, checksum over addr+data.
+    // F0 41 10 45 12 10 00 00 "HI" sum F7 -- model 45, the SC-55's
+    // display -- checksum over addr+data.
     let payload: Vec<u8> = vec![0x10, 0x00, 0x00, b'H', b'I'];
     let sum = (128 - payload.iter().map(|&b| b as u32).sum::<u32>() % 128) % 128;
-    let mut msg = vec![0xF0, 0x41, 0x10, 0x42, 0x12];
+    let mut msg = vec![0xF0, 0x41, 0x10, 0x45, 0x12];
     msg.extend(&payload);
     msg.push(sum as u8);
     msg.push(0xF7);

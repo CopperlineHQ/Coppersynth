@@ -4,6 +4,7 @@
 
 pub mod engine;
 pub mod mt32;
+pub mod panel;
 
 /// The engine's own version, for logs and About lines.
 pub fn version() -> String {
