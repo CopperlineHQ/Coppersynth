@@ -25,8 +25,11 @@ fn main() {
         std::process::exit(2);
     }
 
-    let sound_font = Arc::new(SoundFont::new(&mut File::open(&args[1]).expect("soundfont")).expect("parse soundfont"));
-    let midi = Arc::new(MidiFile::new(&mut File::open(&args[2]).expect("midi file")).expect("parse midi"));
+    let sound_font = Arc::new(
+        SoundFont::new(&mut File::open(&args[1]).expect("soundfont")).expect("parse soundfont"),
+    );
+    let midi =
+        Arc::new(MidiFile::new(&mut File::open(&args[2]).expect("midi file")).expect("parse midi"));
 
     let settings = SynthesizerSettings::new(SAMPLE_RATE);
     let synthesizer = Synthesizer::new(&sound_font, &settings).expect("synthesizer");

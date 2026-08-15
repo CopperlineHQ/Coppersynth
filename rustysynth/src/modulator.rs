@@ -355,8 +355,8 @@ mod tests {
     /// like the ignored suites elsewhere.
     #[test]
     fn generaluser_parses_through_the_modulator_path() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../assets/GeneralUser-GS.sf2");
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/GeneralUser-GS.sf2");
         let Ok(mut file) = std::fs::File::open(path) else {
             return;
         };

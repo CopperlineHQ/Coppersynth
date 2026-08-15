@@ -5,9 +5,9 @@ use std::f32::consts;
 use crate::bi_quad_filter::BiQuadFilter;
 use crate::channel::Channel;
 use crate::generator_type::GeneratorType;
-use crate::modulator::{Modulator, DEFAULT_VEL_TO_ATTENUATION};
 use crate::lfo::Lfo;
 use crate::modulation_envelope::ModulationEnvelope;
+use crate::modulator::{Modulator, DEFAULT_VEL_TO_ATTENUATION};
 use crate::oscillator::Oscillator;
 use crate::region_ex::RegionEx;
 use crate::region_pair::RegionPair;
@@ -215,22 +215,16 @@ impl Voice {
                 let value = m.static_contribution(key, velocity);
                 match m.destination {
                     GeneratorType::START_ADDRESS_OFFSET => start_offset += value,
-                    GeneratorType::START_ADDRESS_COARSE_OFFSET => {
-                        start_offset += 32768_f32 * value
-                    }
+                    GeneratorType::START_ADDRESS_COARSE_OFFSET => start_offset += 32768_f32 * value,
                     GeneratorType::INITIAL_ATTENUATION => self.static_atten_cb += value,
-                    GeneratorType::INITIAL_FILTER_CUTOFF_FREQUENCY => {
-                        static_cutoff_cents += value
-                    }
+                    GeneratorType::INITIAL_FILTER_CUTOFF_FREQUENCY => static_cutoff_cents += value,
                     GeneratorType::INITIAL_FILTER_Q => static_q_cb += value,
                     GeneratorType::PAN => static_pan += value,
                     GeneratorType::REVERB_EFFECTS_SEND => static_reverb += value,
                     GeneratorType::CHORUS_EFFECTS_SEND => static_chorus += value,
                     GeneratorType::MODULATION_LFO_TO_PITCH => static_mod_lfo_pitch += value,
                     GeneratorType::VIBRATO_LFO_TO_PITCH => static_vib_lfo_pitch += value,
-                    GeneratorType::MODULATION_ENVELOPE_TO_PITCH => {
-                        static_mod_env_pitch += value
-                    }
+                    GeneratorType::MODULATION_ENVELOPE_TO_PITCH => static_mod_env_pitch += value,
                     GeneratorType::MODULATION_LFO_TO_FILTER_CUTOFF_FREQUENCY => {
                         static_mod_lfo_cutoff += value
                     }
@@ -273,8 +267,7 @@ impl Voice {
 
         // The filter's base is kept in cents so modulator contributions,
         // which arrive in cents, compose with the LFO and envelope paths.
-        self.base_cutoff_cents = region
-            .gen_sum(GeneratorType::INITIAL_FILTER_CUTOFF_FREQUENCY)
+        self.base_cutoff_cents = region.gen_sum(GeneratorType::INITIAL_FILTER_CUTOFF_FREQUENCY)
             as f32
             + static_cutoff_cents;
         self.cutoff = SoundFontMath::cents_to_hertz(self.base_cutoff_cents);
@@ -478,9 +471,7 @@ impl Voice {
             let value = m.contribution(channel_info, self.key, self.velocity);
             match m.destination {
                 GeneratorType::INITIAL_ATTENUATION => self.dyn_atten_cb += value,
-                GeneratorType::INITIAL_FILTER_CUTOFF_FREQUENCY => {
-                    self.dyn_cutoff_cents += value
-                }
+                GeneratorType::INITIAL_FILTER_CUTOFF_FREQUENCY => self.dyn_cutoff_cents += value,
                 GeneratorType::REVERB_EFFECTS_SEND => self.dyn_reverb += value,
                 GeneratorType::CHORUS_EFFECTS_SEND => self.dyn_chorus += value,
                 GeneratorType::PAN => self.dyn_pan += value,

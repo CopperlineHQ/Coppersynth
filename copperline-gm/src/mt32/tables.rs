@@ -17,119 +17,119 @@
 /// GM program for each MT-32 preset timbre (group a: 0-63, group b:
 /// 64-127). Contested entries carry their provenance.
 pub const PATCH_TO_GM: [u8; 128] = [
-    0, // AcouPiano1
-    1, // AcouPiano2
-    0, // AcouPiano3 -- sierra (1 game); scummvm 0, wildmidi 2
-    2, // ElecPiano1 -- scummvm; wildmidi says 4
-    4, // ElecPiano2
-    4, // ElecPiano3 -- scummvm; wildmidi says 5
-    5, // ElecPiano4
-    3, // Honkytonk
-    16, // Elec Org 1
-    17, // Elec Org 2
-    18, // Elec Org 3
-    16, // Elec Org 4
-    19, // Pipe Org 1 -- sierra (1 game); scummvm 16, wildmidi 19
-    19, // Pipe Org 2
-    20, // Pipe Org 3 -- scummvm; wildmidi says 19
-    21, // Accordion
-    6, // Harpsi 1
-    6, // Harpsi 2
-    6, // Harpsi 3
-    7, // Clavi 1
-    7, // Clavi 2
-    7, // Clavi 3
-    8, // Celesta 1
+    0,   // AcouPiano1
+    1,   // AcouPiano2
+    0,   // AcouPiano3 -- sierra (1 game); scummvm 0, wildmidi 2
+    2,   // ElecPiano1 -- scummvm; wildmidi says 4
+    4,   // ElecPiano2
+    4,   // ElecPiano3 -- scummvm; wildmidi says 5
+    5,   // ElecPiano4
+    3,   // Honkytonk
+    16,  // Elec Org 1
+    17,  // Elec Org 2
+    18,  // Elec Org 3
+    16,  // Elec Org 4
+    19,  // Pipe Org 1 -- sierra (1 game); scummvm 16, wildmidi 19
+    19,  // Pipe Org 2
+    20,  // Pipe Org 3 -- scummvm; wildmidi says 19
+    21,  // Accordion
+    6,   // Harpsi 1
+    6,   // Harpsi 2
+    6,   // Harpsi 3
+    7,   // Clavi 1
+    7,   // Clavi 2
+    7,   // Clavi 3
+    8,   // Celesta 1
     112, // Celesta 2 -- scummvm; wildmidi says 8
-    62, // Syn Brass1
-    62, // Syn Brass2 -- scummvm; wildmidi says 63
-    63, // Syn Brass3 -- scummvm; wildmidi says 62
-    63, // Syn Brass4
-    38, // Syn Bass 1
-    38, // Syn Bass 2 -- scummvm; wildmidi says 39
-    39, // Syn Bass 3 -- scummvm; wildmidi says 38
-    39, // Syn Bass 4
-    88, // Fantasy
-    95, // Harmo Pan -- scummvm; wildmidi says 90
-    52, // Chorale
-    98, // Glasses -- scummvm; wildmidi says 92
-    97, // Soundtrack
-    99, // Atmosphere
-    14, // Warm Bell
-    54, // Funny Vox
+    62,  // Syn Brass1
+    62,  // Syn Brass2 -- scummvm; wildmidi says 63
+    63,  // Syn Brass3 -- scummvm; wildmidi says 62
+    63,  // Syn Brass4
+    38,  // Syn Bass 1
+    38,  // Syn Bass 2 -- scummvm; wildmidi says 39
+    39,  // Syn Bass 3 -- scummvm; wildmidi says 38
+    39,  // Syn Bass 4
+    88,  // Fantasy
+    95,  // Harmo Pan -- scummvm; wildmidi says 90
+    52,  // Chorale
+    98,  // Glasses -- scummvm; wildmidi says 92
+    97,  // Soundtrack
+    99,  // Atmosphere
+    14,  // Warm Bell
+    54,  // Funny Vox
     102, // Echo Bell -- scummvm; wildmidi says 98
-    96, // Ice Rain
-    53, // Oboe 2001 -- scummvm; wildmidi says 68
+    96,  // Ice Rain
+    53,  // Oboe 2001 -- scummvm; wildmidi says 68
     102, // Echo Pan -- scummvm; wildmidi says 95
-    81, // DoctorSolo
+    81,  // DoctorSolo
     100, // Schooldaze -- scummvm; wildmidi says 87
-    14, // BellSinger -- scummvm; wildmidi says 112
-    80, // SquareWave
-    48, // Str Sect 1
-    48, // Str Sect 2
-    49, // Str Sect 3 -- scummvm; wildmidi says 44
-    45, // Pizzicato
-    41, // Violin 1 -- scummvm; wildmidi says 40
-    40, // Violin 2
-    42, // Cello 1
-    42, // Cello 2
-    43, // Contrabass
-    46, // Harp 1
-    45, // Harp 2 -- scummvm; wildmidi says 46
-    24, // Guitar 1
-    25, // Guitar 2
-    28, // Elec Gtr 1 -- scummvm; wildmidi says 26
-    27, // Elec Gtr 2
+    14,  // BellSinger -- scummvm; wildmidi says 112
+    80,  // SquareWave
+    48,  // Str Sect 1
+    48,  // Str Sect 2
+    49,  // Str Sect 3 -- scummvm; wildmidi says 44
+    45,  // Pizzicato
+    41,  // Violin 1 -- scummvm; wildmidi says 40
+    40,  // Violin 2
+    42,  // Cello 1
+    42,  // Cello 2
+    43,  // Contrabass
+    46,  // Harp 1
+    45,  // Harp 2 -- scummvm; wildmidi says 46
+    24,  // Guitar 1
+    25,  // Guitar 2
+    28,  // Elec Gtr 1 -- scummvm; wildmidi says 26
+    27,  // Elec Gtr 2
     104, // Sitar
-    32, // Acou Bass1
-    32, // Acou Bass2
-    34, // Elec Bass1 -- scummvm; wildmidi says 33
-    33, // Elec Bass2 -- scummvm; wildmidi says 34
-    36, // Slap Bass1
-    37, // Slap Bass2
-    35, // Fretless 1
-    35, // Fretless 2
-    79, // Flute 1 -- scummvm; wildmidi says 73
-    73, // Flute 2
-    72, // Piccolo 1
-    72, // Piccolo 2
-    74, // Recorder
-    75, // Panpipes
-    64, // Sax 1
-    65, // Sax 2
-    66, // Sax 3
-    67, // Sax 4
-    71, // Clarinet 1
-    71, // Clarinet 2
-    68, // Oboe
-    69, // Engl Horn
-    70, // Bassoon
-    22, // Harmonica
-    56, // Trumpet 1
-    56, // Trumpet 2 -- sierra (2 games); scummvm 59, wildmidi 56
-    57, // Trombone 1
-    57, // Trombone 2
-    60, // Fr Horn 1
-    60, // Fr Horn 2
-    58, // Tuba
-    61, // Brs Sect 1
-    61, // Brs Sect 2
-    11, // Vibe 1
-    11, // Vibe 2
-    15, // Syn Mallet -- sierra (1 game); scummvm 98, wildmidi 99
-    14, // Wind Bell -- scummvm; wildmidi says 112
-    9, // Glock
-    14, // Tube Bell
-    13, // Xylophone
-    12, // Marimba
+    32,  // Acou Bass1
+    32,  // Acou Bass2
+    34,  // Elec Bass1 -- scummvm; wildmidi says 33
+    33,  // Elec Bass2 -- scummvm; wildmidi says 34
+    36,  // Slap Bass1
+    37,  // Slap Bass2
+    35,  // Fretless 1
+    35,  // Fretless 2
+    79,  // Flute 1 -- scummvm; wildmidi says 73
+    73,  // Flute 2
+    72,  // Piccolo 1
+    72,  // Piccolo 2
+    74,  // Recorder
+    75,  // Panpipes
+    64,  // Sax 1
+    65,  // Sax 2
+    66,  // Sax 3
+    67,  // Sax 4
+    71,  // Clarinet 1
+    71,  // Clarinet 2
+    68,  // Oboe
+    69,  // Engl Horn
+    70,  // Bassoon
+    22,  // Harmonica
+    56,  // Trumpet 1
+    56,  // Trumpet 2 -- sierra (2 games); scummvm 59, wildmidi 56
+    57,  // Trombone 1
+    57,  // Trombone 2
+    60,  // Fr Horn 1
+    60,  // Fr Horn 2
+    58,  // Tuba
+    61,  // Brs Sect 1
+    61,  // Brs Sect 2
+    11,  // Vibe 1
+    11,  // Vibe 2
+    15,  // Syn Mallet -- sierra (1 game); scummvm 98, wildmidi 99
+    14,  // Wind Bell -- scummvm; wildmidi says 112
+    9,   // Glock
+    14,  // Tube Bell
+    13,  // Xylophone
+    12,  // Marimba
     107, // Koto
     107, // Sho -- scummvm; wildmidi says 111
-    77, // Shakuhachi
-    78, // Whistle 1
-    78, // Whistle 2
-    76, // BottleBlow
-    76, // BreathPipe
-    47, // Timpani
+    77,  // Shakuhachi
+    78,  // Whistle 1
+    78,  // Whistle 2
+    76,  // BottleBlow
+    76,  // BreathPipe
+    47,  // Timpani
     117, // MelodicTom
     127, // Deep Snare -- scummvm; wildmidi says 116
     118, // Elec Perc1
@@ -139,49 +139,145 @@ pub const PATCH_TO_GM: [u8; 128] = [
     119, // Cymbal
     115, // Castanets
     112, // Triangle
-    55, // Orche Hit
+    55,  // Orche Hit
     124, // Telephone
     123, // Bird Tweet
-    0, // OneNoteJam -- scummvm; wildmidi says 94
-    14, // WaterBells -- scummvm; wildmidi says 98
+    0,   // OneNoteJam -- scummvm; wildmidi says 94
+    14,  // WaterBells -- scummvm; wildmidi says 98
     117, // JungleTune -- scummvm; wildmidi says 121
 ];
 
 /// The preset timbre names, in preset order, as the control ROM spells
 /// them: what a patch-memory write names, and what the panel shows.
 pub const PRESET_NAMES: [&str; 128] = [
-    "AcouPiano1", "AcouPiano2", "AcouPiano3", "ElecPiano1",
-    "ElecPiano2", "ElecPiano3", "ElecPiano4", "Honkytonk ",
-    "Elec Org 1", "Elec Org 2", "Elec Org 3", "Elec Org 4",
-    "Pipe Org 1", "Pipe Org 2", "Pipe Org 3", "Accordion ",
-    "Harpsi 1  ", "Harpsi 2  ", "Harpsi 3  ", "Clavi 1   ",
-    "Clavi 2   ", "Clavi 3   ", "Celesta 1 ", "Celesta 2 ",
-    "Syn Brass1", "Syn Brass2", "Syn Brass3", "Syn Brass4",
-    "Syn Bass 1", "Syn Bass 2", "Syn Bass 3", "Syn Bass 4",
-    "Fantasy   ", "Harmo Pan ", "Chorale   ", "Glasses   ",
-    "Soundtrack", "Atmosphere", "Warm Bell ", "Funny Vox ",
-    "Echo Bell ", "Ice Rain  ", "Oboe 2001 ", "Echo Pan  ",
-    "DoctorSolo", "Schooldaze", "BellSinger", "SquareWave",
-    "Str Sect 1", "Str Sect 2", "Str Sect 3", "Pizzicato ",
-    "Violin 1  ", "Violin 2  ", "Cello 1   ", "Cello 2   ",
-    "Contrabass", "Harp 1    ", "Harp 2    ", "Guitar 1  ",
-    "Guitar 2  ", "Elec Gtr 1", "Elec Gtr 2", "Sitar     ",
-    "Acou Bass1", "Acou Bass2", "Elec Bass1", "Elec Bass2",
-    "Slap Bass1", "Slap Bass2", "Fretless 1", "Fretless 2",
-    "Flute 1   ", "Flute 2   ", "Piccolo 1 ", "Piccolo 2 ",
-    "Recorder  ", "Panpipes  ", "Sax 1     ", "Sax 2     ",
-    "Sax 3     ", "Sax 4     ", "Clarinet 1", "Clarinet 2",
-    "Oboe      ", "Engl Horn ", "Bassoon   ", "Harmonica ",
-    "Trumpet 1 ", "Trumpet 2 ", "Trombone 1", "Trombone 2",
-    "Fr Horn 1 ", "Fr Horn 2 ", "Tuba      ", "Brs Sect 1",
-    "Brs Sect 2", "Vibe 1    ", "Vibe 2    ", "Syn Mallet",
-    "Wind Bell ", "Glock     ", "Tube Bell ", "Xylophone ",
-    "Marimba   ", "Koto      ", "Sho       ", "Shakuhachi",
-    "Whistle 1 ", "Whistle 2 ", "BottleBlow", "BreathPipe",
-    "Timpani   ", "MelodicTom", "Deep Snare", "Elec Perc1",
-    "Elec Perc2", "Taiko     ", "Taiko Rim ", "Cymbal    ",
-    "Castanets ", "Triangle  ", "Orche Hit ", "Telephone ",
-    "Bird Tweet", "OneNoteJam", "WaterBells", "JungleTune",
+    "AcouPiano1",
+    "AcouPiano2",
+    "AcouPiano3",
+    "ElecPiano1",
+    "ElecPiano2",
+    "ElecPiano3",
+    "ElecPiano4",
+    "Honkytonk ",
+    "Elec Org 1",
+    "Elec Org 2",
+    "Elec Org 3",
+    "Elec Org 4",
+    "Pipe Org 1",
+    "Pipe Org 2",
+    "Pipe Org 3",
+    "Accordion ",
+    "Harpsi 1  ",
+    "Harpsi 2  ",
+    "Harpsi 3  ",
+    "Clavi 1   ",
+    "Clavi 2   ",
+    "Clavi 3   ",
+    "Celesta 1 ",
+    "Celesta 2 ",
+    "Syn Brass1",
+    "Syn Brass2",
+    "Syn Brass3",
+    "Syn Brass4",
+    "Syn Bass 1",
+    "Syn Bass 2",
+    "Syn Bass 3",
+    "Syn Bass 4",
+    "Fantasy   ",
+    "Harmo Pan ",
+    "Chorale   ",
+    "Glasses   ",
+    "Soundtrack",
+    "Atmosphere",
+    "Warm Bell ",
+    "Funny Vox ",
+    "Echo Bell ",
+    "Ice Rain  ",
+    "Oboe 2001 ",
+    "Echo Pan  ",
+    "DoctorSolo",
+    "Schooldaze",
+    "BellSinger",
+    "SquareWave",
+    "Str Sect 1",
+    "Str Sect 2",
+    "Str Sect 3",
+    "Pizzicato ",
+    "Violin 1  ",
+    "Violin 2  ",
+    "Cello 1   ",
+    "Cello 2   ",
+    "Contrabass",
+    "Harp 1    ",
+    "Harp 2    ",
+    "Guitar 1  ",
+    "Guitar 2  ",
+    "Elec Gtr 1",
+    "Elec Gtr 2",
+    "Sitar     ",
+    "Acou Bass1",
+    "Acou Bass2",
+    "Elec Bass1",
+    "Elec Bass2",
+    "Slap Bass1",
+    "Slap Bass2",
+    "Fretless 1",
+    "Fretless 2",
+    "Flute 1   ",
+    "Flute 2   ",
+    "Piccolo 1 ",
+    "Piccolo 2 ",
+    "Recorder  ",
+    "Panpipes  ",
+    "Sax 1     ",
+    "Sax 2     ",
+    "Sax 3     ",
+    "Sax 4     ",
+    "Clarinet 1",
+    "Clarinet 2",
+    "Oboe      ",
+    "Engl Horn ",
+    "Bassoon   ",
+    "Harmonica ",
+    "Trumpet 1 ",
+    "Trumpet 2 ",
+    "Trombone 1",
+    "Trombone 2",
+    "Fr Horn 1 ",
+    "Fr Horn 2 ",
+    "Tuba      ",
+    "Brs Sect 1",
+    "Brs Sect 2",
+    "Vibe 1    ",
+    "Vibe 2    ",
+    "Syn Mallet",
+    "Wind Bell ",
+    "Glock     ",
+    "Tube Bell ",
+    "Xylophone ",
+    "Marimba   ",
+    "Koto      ",
+    "Sho       ",
+    "Shakuhachi",
+    "Whistle 1 ",
+    "Whistle 2 ",
+    "BottleBlow",
+    "BreathPipe",
+    "Timpani   ",
+    "MelodicTom",
+    "Deep Snare",
+    "Elec Perc1",
+    "Elec Perc2",
+    "Taiko     ",
+    "Taiko Rim ",
+    "Cymbal    ",
+    "Castanets ",
+    "Triangle  ",
+    "Orche Hit ",
+    "Telephone ",
+    "Bird Tweet",
+    "OneNoteJam",
+    "WaterBells",
+    "JungleTune",
 ];
 
 /// Sierra's own GM choices for their custom timbres, by the 10-column
@@ -309,8 +405,14 @@ mod tests {
     fn the_contested_entries_hold_their_resolutions() {
         // Sierra witnesses.
         assert_eq!(PATCH_TO_GM[2], 0, "AcouPiano3: Sierra sides with ScummVM");
-        assert_eq!(PATCH_TO_GM[12], 19, "Pipe Org 1 is a church organ, per Sierra");
-        assert_eq!(PATCH_TO_GM[89], 56, "Trumpet 2 is not muted, per two Sierra games");
+        assert_eq!(
+            PATCH_TO_GM[12], 19,
+            "Pipe Org 1 is a church organ, per Sierra"
+        );
+        assert_eq!(
+            PATCH_TO_GM[89], 56,
+            "Trumpet 2 is not muted, per two Sierra games"
+        );
         assert_eq!(PATCH_TO_GM[99], 15, "Syn Mallet: Sierra chose Dulcimer");
         // No witness: ScummVM stands.
         assert_eq!(PATCH_TO_GM[23], 112, "Sound Tracker: ScummVM's Tinkle Bell");
@@ -336,5 +438,120 @@ mod tests {
         assert_eq!(rhythm_key_to_gm(75), Some(75));
         assert_eq!(rhythm_key_to_gm(34), None);
         assert_eq!(rhythm_key_to_gm(76), None);
+    }
+}
+
+/// The default key each preset rhythm timbre sits on, in rhythm-timbre
+/// order, recovered from the Sierra banks' rhythm sections (they ship
+/// the default arrangement). A game's rhythm-setup write that assigns
+/// rhythm timbre N to some other key routes that key here. Timbres the
+/// banks never placed have no home and stay unmapped.
+pub(crate) const RHYTHM_TIMBRE_KEY: [Option<u8>; 30] = [
+    Some(35), // Acou BD
+    Some(38), // Acou SD
+    Some(48), // Acou HiTom
+    Some(45), // AcouMidTom
+    Some(41), // AcouLowTom
+    Some(40), // Elec SD
+    Some(42), // Clsd HiHat
+    Some(46), // OpenHiHat1
+    Some(49), // Crash Cym
+    Some(51), // Ride Cym
+    Some(37), // Rim Shot
+    Some(39), // Hand Clap
+    Some(56), // Cowbell
+    Some(62), // Mt HiConga
+    Some(63), // High Conga
+    Some(64), // Low Conga
+    Some(65), // Hi Timbale
+    Some(66), // LowTimbale
+    Some(60), // High Bongo
+    Some(61), // Low Bongo
+    Some(67), // High Agogo
+    Some(68), // Low Agogo
+    Some(54), // Tambourine
+    Some(75), // Claves
+    Some(70), // Maracas
+    Some(72), // SmbaWhis L
+    Some(71), // SmbaWhis S
+    Some(69), // Cabasa
+    Some(73), // Quijada
+    Some(44), // OpenHiHat2
+];
+
+/// Where a preset rhythm timbre sounds in the GM kit.
+pub(crate) fn rhythm_timbre_home_key(timbre: u8) -> Option<u8> {
+    RHYTHM_TIMBRE_KEY.get(timbre as usize).copied().flatten()
+}
+
+/// Squash a timbre name for matching: lowercase, alphanumerics only.
+/// "FrHorn1MS2" and "Fr Horn 1" meet in the middle.
+fn squash(name: &[u8]) -> Vec<u8> {
+    name.iter()
+        .filter(|b| b.is_ascii_alphanumeric())
+        .map(|b| b.to_ascii_lowercase())
+        .collect()
+}
+
+/// The GM rendering of a custom timbre, by the name the game uploaded:
+/// (program, key shift, velocity adjustment).
+///
+/// Sierra's own table answers first -- they named these timbres and then
+/// chose their GM stand-ins themselves. Failing that, the name is matched
+/// against the preset timbres, longest squashed substring wins, which
+/// catches the everyday "modified preset" ("StrSect1MS" lands on the
+/// string section). A name matching nothing falls back to a square lead:
+/// audibly synthetic, deliberately so, and logged upstream where there is
+/// a log to write to.
+pub fn match_custom_name(name: &[u8; 10]) -> (u8, i8, i8) {
+    let uploaded = squash(name);
+    if uploaded.is_empty() {
+        return (80, 0, 0);
+    }
+    // Sierra's table stores names without their "m " marker; exact squash
+    // equality first, then containment either way.
+    let mut best: Option<(usize, (u8, i8, i8))> = None;
+    for &(sierra, gm, ksh, vol) in CUSTOM_NAME_TO_GM.iter() {
+        let s = squash(sierra.as_bytes());
+        if s.is_empty() {
+            continue;
+        }
+        let score = if s == uploaded {
+            usize::MAX
+        } else if uploaded
+            .windows(s.len().min(uploaded.len()))
+            .any(|w| w == &s[..])
+            || s.windows(uploaded.len().min(s.len()))
+                .any(|w| w == &uploaded[..])
+        {
+            s.len()
+        } else {
+            continue;
+        };
+        if best.map_or(true, |(b, _)| score > b) {
+            best = Some((score, (gm, ksh, vol)));
+        }
+    }
+    if let Some((_, hit)) = best {
+        return hit;
+    }
+    let mut preset_best: Option<(usize, u8)> = None;
+    for (i, preset) in PRESET_NAMES.iter().enumerate() {
+        let p = squash(preset.as_bytes());
+        if p.len() < 3 {
+            continue;
+        }
+        if uploaded
+            .windows(p.len().min(uploaded.len()))
+            .any(|w| w == &p[..])
+        {
+            if preset_best.map_or(true, |(b, _)| p.len() > b) {
+                preset_best = Some((p.len(), PATCH_TO_GM[i]));
+            }
+        }
+    }
+    match preset_best {
+        Some((_, gm)) => (gm, 0, 0),
+        None => (80, 0, 0),
     }
 }

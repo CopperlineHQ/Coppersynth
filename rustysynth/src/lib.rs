@@ -39,9 +39,9 @@ mod voice_collection;
 mod volume_envelope;
 
 mod midifile;
-mod modulator;
 mod midifile_looptype;
 mod midifile_sequencer;
+mod modulator;
 
 mod chorus;
 mod reverb;
