@@ -247,12 +247,7 @@ fn a_corrupt_checksum_is_dropped_whole() {
     push_all(&mut t, &sysex);
     let out = push_all(&mut t, &[0xC1, 0]);
     assert!(
-        out.contains(&midi(
-            0xC0,
-            1,
-            coppersynth::mt32::tables::PATCH_TO_GM[0],
-            0
-        )),
+        out.contains(&midi(0xC0, 1, coppersynth::mt32::tables::PATCH_TO_GM[0], 0)),
         "the write must not have applied: {out:?}"
     );
 }
