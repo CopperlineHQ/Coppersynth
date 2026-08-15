@@ -4,7 +4,7 @@
 //! matcher, rhythm identity and the auto-detect are each held by the
 //! byte streams a real game produces.
 
-use copperline_gm::mt32::translator::{Event, Mt32Mode, Mt32Translator};
+use coppersynth::mt32::translator::{Event, Mt32Mode, Mt32Translator};
 
 fn push_all(t: &mut Mt32Translator, bytes: &[u8]) -> Vec<Event> {
     let mut out = Vec::new();
@@ -110,7 +110,7 @@ fn a_patch_memory_write_repoints_a_program() {
     let sysex = dt1(0x05 << 14 | 5 * 8, &[1, 3, 24, 50, 2, 0, 1, 0]);
     push_all(&mut t, &sysex);
     let out = push_all(&mut t, &[0xC2, 5]);
-    let expected = copperline_gm::mt32::tables::PATCH_TO_GM[64 + 3];
+    let expected = coppersynth::mt32::tables::PATCH_TO_GM[64 + 3];
     assert!(
         out.contains(&midi(0xC0, 2, expected, 0)),
         "patch 5 now renders group b timbre 3: {out:?}"
@@ -146,7 +146,7 @@ fn an_unknown_custom_name_lands_on_a_preset_by_substring() {
     let sysex = dt1(0x05 << 14, &[2, 1, 24, 50, 12, 0, 1, 0]);
     push_all(&mut t, &sysex);
     let out = push_all(&mut t, &[0xC3, 0]);
-    let horn = copperline_gm::mt32::tables::PATCH_TO_GM[copperline_gm::mt32::tables::PRESET_NAMES
+    let horn = coppersynth::mt32::tables::PATCH_TO_GM[coppersynth::mt32::tables::PRESET_NAMES
         .iter()
         .position(|n| n.trim() == "Fr Horn 1")
         .unwrap()];
@@ -250,7 +250,7 @@ fn a_corrupt_checksum_is_dropped_whole() {
         out.contains(&midi(
             0xC0,
             1,
-            copperline_gm::mt32::tables::PATCH_TO_GM[0],
+            coppersynth::mt32::tables::PATCH_TO_GM[0],
             0
         )),
         "the write must not have applied: {out:?}"

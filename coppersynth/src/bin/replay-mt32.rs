@@ -6,8 +6,8 @@
 //!
 //!     replay-mt32 CAPTURE.bytes
 
-use copperline_gm::mt32::tables;
-use copperline_gm::mt32::translator::{Event, Mt32Mode, Mt32Translator};
+use coppersynth::mt32::tables;
+use coppersynth::mt32::translator::{Event, Mt32Mode, Mt32Translator};
 
 const GM_NAMES: [&str; 128] = [
     "Acoustic Grand Piano",
