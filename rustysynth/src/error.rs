@@ -76,6 +76,7 @@ pub enum SoundFontError {
     InvalidZoneList,
     ZoneNotFound,
     InvalidGeneratorList,
+    InvalidModulatorList,
     SanityCheckFailed,
 }
 
@@ -142,6 +143,7 @@ impl fmt::Display for SoundFontError {
             SoundFontError::InvalidZoneList => write!(f, "the zone list is invalid"),
             SoundFontError::ZoneNotFound => write!(f, "no valid zone was found"),
             SoundFontError::InvalidGeneratorList => write!(f, "the generator list is invalid"),
+            SoundFontError::InvalidModulatorList => write!(f, "the modulator list is invalid"),
             SoundFontError::SanityCheckFailed => write!(f, "sanity check failed"),
         }
     }
