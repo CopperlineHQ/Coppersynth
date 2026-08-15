@@ -159,7 +159,7 @@ fn main() {
             if body.len() >= 17 && body[0] == 0x41 && body[2] == 0x16 && body[3] == 0x12 {
                 let addr = ((body[4] as u32) << 14) | ((body[5] as u32) << 7) | body[6] as u32;
                 if (0x08 << 14..(0x08 << 14) + 64 * 256).contains(&addr)
-                    && (addr - (0x08 << 14)) % 256 == 0
+                    && (addr - (0x08 << 14)).is_multiple_of(256)
                 {
                     let mut n = [b' '; 10];
                     n.copy_from_slice(&body[7..17]);
@@ -187,7 +187,6 @@ fn main() {
     let mut t = Mt32Translator::new(Mt32Mode::Auto);
     let mut programs: Vec<(u8, u8)> = Vec::new();
     let mut notes = 0usize;
-    let mut dropped_rhythm = 0usize;
     let mut rhythm_notes = 0usize;
     println!("\n--- replay ---");
     for &b in &bytes {
@@ -238,7 +237,7 @@ fn main() {
             }
         }
     }
-    dropped_rhythm = raw_rhythm.saturating_sub(rhythm_notes);
+    let dropped_rhythm = raw_rhythm.saturating_sub(rhythm_notes);
 
     println!("\n--- programs in force (channel -> GM) ---");
     for (ch, gm) in &programs {
