@@ -111,6 +111,10 @@ pub struct Mt32Translator {
     /// Where each sounding note was emitted, so its note-off lands on the
     /// same key whatever the shift has become since.
     emitted_key: [[u8; 128]; 16],
+    /// What the timbre driving each channel is called on the unit's own
+    /// display: a preset's factory name, or the name the game uploaded
+    /// with a custom. For the host's front panel.
+    channel_name: [Option<String>; 16],
 
     events: Vec<Event>,
 }
@@ -133,6 +137,7 @@ impl Mt32Translator {
             velocity_adjust: [0; 16],
             sent_bend_range: [0xFF; 16],
             emitted_key: [[NO_KEY; 128]; 16],
+            channel_name: std::array::from_fn(|_| None),
             events: Vec::new(),
         };
         if t.active {
@@ -143,6 +148,15 @@ impl Mt32Translator {
 
     pub fn is_translating(&self) -> bool {
         self.active
+    }
+
+    /// What the timbre on `channel` is called, while translating: the
+    /// name an MT-32's display would use for it.
+    pub fn channel_name(&self, channel: usize) -> Option<&str> {
+        if !self.active {
+            return None;
+        }
+        self.channel_name.get(channel)?.as_deref()
     }
 
     /// Feed one byte off the wire; drain what it produced.
@@ -297,8 +311,31 @@ impl Mt32Translator {
         self.gm_program[ch] = gm;
         self.key_shift[ch] = p.key_shift as i16 - 24 + extra_shift as i16;
         self.velocity_adjust[ch] = vel_adjust as i16;
+        self.channel_name[ch] = Some(self.patch_display_name(&p));
         self.emit(0xC0, channel, gm, 0);
         self.ensure_bend_range(channel, p.bender_range);
+    }
+
+    /// What the unit's display calls a patch's timbre.
+    fn patch_display_name(&self, p: &Patch) -> String {
+        let index = (p.timbre_number & 63) as usize;
+        match p.timbre_group {
+            0 => tables::PRESET_NAMES[index].to_string(),
+            1 => tables::PRESET_NAMES[64 + index].to_string(),
+            2 => self.timbre_names[index]
+                .iter()
+                .map(|&b| {
+                    if (0x20..0x7F).contains(&b) {
+                        b as char
+                    } else {
+                        ' '
+                    }
+                })
+                .collect::<String>()
+                .trim()
+                .to_string(),
+            _ => "Rhythm".to_string(),
+        }
     }
 
     /// The GM rendering of a patch: program, extra key shift, velocity
@@ -355,10 +392,21 @@ impl Mt32Translator {
         }
         // Universal GM reset: 7E dev 09 01|02|03.
         if body.len() >= 4 && body[0] == 0x7E && body[2] == 0x09 {
-            if self.mode == Mt32Mode::Auto && self.active {
-                self.active = false;
-                self.events.push(Event::Translating(false));
+            self.leave_mt32();
+            return;
+        }
+        // Roland DT1 to a GS device (Sound Canvas class): 41 dev 42 12
+        // aa bb cc data.. sum. Handled in every mode -- a GM bank plays
+        // Sound Canvas aware games with translation off, and their text
+        // should still reach the display.
+        if body.len() >= 8 && body[0] == 0x41 && body[2] == 0x42 && body[3] == 0x12 {
+            let addr = ((body[4] as u32) << 14) | ((body[5] as u32) << 7) | body[6] as u32;
+            let data = &body[7..body.len() - 1];
+            let sum: u32 = body[4..].iter().map(|&b| b as u32).sum();
+            if !sum.is_multiple_of(128) {
+                return;
             }
+            self.on_gs_write(addr, data);
             return;
         }
         // Roland DT1 to an MT-32: 41 dev 16 12 aa bb cc data.. sum.
@@ -379,6 +427,50 @@ impl Mt32Translator {
                 return;
             }
             self.apply_write(addr, data);
+        }
+    }
+
+    /// A write to the GS memory map: only what shows on a front panel
+    /// is modelled -- display text, master volume, and the reset that
+    /// says the traffic is Sound Canvas rather than MT-32.
+    fn on_gs_write(&mut self, addr: u32, data: &[u8]) {
+        const DISPLAY: u32 = 0x10 << 14;
+        const SYSTEM: u32 = 0x40 << 14;
+        if (DISPLAY..DISPLAY + 0x20).contains(&addr) {
+            let text: String = data
+                .iter()
+                .map(|&b| {
+                    if (0x20..0x7F).contains(&b) {
+                        b as char
+                    } else {
+                        ' '
+                    }
+                })
+                .collect();
+            let text = text.trim().to_string();
+            if !text.is_empty() {
+                self.events.push(Event::Display(text));
+            }
+            return;
+        }
+        match addr {
+            a if a == SYSTEM | 0x04 => {
+                if let Some(&v) = data.first() {
+                    self.events.push(Event::MasterVolume(v & 0x7F));
+                }
+            }
+            a if a == SYSTEM | 0x7F => self.leave_mt32(),
+            _ => {}
+        }
+    }
+
+    /// A GM or GS reset: whatever else it clears, it says the stream is
+    /// not MT-32 traffic, so auto mode stands down.
+    fn leave_mt32(&mut self) {
+        if self.mode == Mt32Mode::Auto && self.active {
+            self.active = false;
+            self.channel_name = std::array::from_fn(|_| None);
+            self.events.push(Event::Translating(false));
         }
     }
 
@@ -485,6 +577,7 @@ impl Mt32Translator {
         self.gm_program[ch] = gm;
         self.key_shift[ch] = p.key_shift as i16 - 24 + extra_shift as i16;
         self.velocity_adjust[ch] = vel_adjust as i16;
+        self.channel_name[ch] = Some(self.patch_display_name(&p));
         self.emit(0xC0, channel, gm, 0);
         self.ensure_bend_range(channel, p.bender_range);
     }

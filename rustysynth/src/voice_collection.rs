@@ -91,6 +91,10 @@ impl VoiceCollection {
         &mut self.voices[0..self.active_voice_count]
     }
 
+    pub(crate) fn active_voices(&self) -> &[Voice] {
+        &self.voices[0..self.active_voice_count]
+    }
+
     pub(crate) fn clear(&mut self) {
         self.active_voice_count = 0;
     }
