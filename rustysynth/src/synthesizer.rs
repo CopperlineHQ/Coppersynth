@@ -516,6 +516,39 @@ impl Synthesizer {
         self.effects.is_some()
     }
 
+    /// Gets the bank and patch numbers channel `channel` last selected.
+    pub fn channel_bank_patch(&self, channel: usize) -> Option<(i32, i32)> {
+        let channel_info = self.channels.get(channel)?;
+        Some((channel_info.get_bank_number(), channel_info.get_patch_number()))
+    }
+
+    /// Gets the raw value of controller `controller` on `channel`.
+    pub fn channel_cc(&self, channel: usize, controller: u8) -> Option<u8> {
+        Some(self.channels.get(channel)?.get_cc(controller))
+    }
+
+    /// Gets the peak amplitude of the voices sounding on each channel:
+    /// the largest per-voice mix gain, which already carries the volume
+    /// envelope, the note's velocity and the channel's own levels.
+    pub fn channel_activity(&self) -> [f32; Synthesizer::CHANNEL_COUNT] {
+        let mut peak = [0_f32; Synthesizer::CHANNEL_COUNT];
+        for voice in self.voices.active_voices() {
+            let gain = voice
+                .current_mix_gain_left
+                .max(voice.current_mix_gain_right);
+            let channel = voice.channel() as usize;
+            if let Some(entry) = peak.get_mut(channel) {
+                *entry = entry.max(gain);
+            }
+        }
+        peak
+    }
+
+    /// Gets the number of voices currently sounding.
+    pub fn active_voice_count(&self) -> usize {
+        self.voices.active_voices().len()
+    }
+
     /// Gets the master volume.
     pub fn get_master_volume(&self) -> f32 {
         self.master_volume
