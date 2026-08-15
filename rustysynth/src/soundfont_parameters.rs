@@ -100,8 +100,11 @@ impl SoundFontParameters {
         let preset_modulators = preset_modulators.unwrap_or_default();
         let instrument_modulators = instrument_modulators.unwrap_or_default();
 
-        let instrument_zones =
-            Zone::create(&instrument_bag, &instrument_generators, &instrument_modulators)?;
+        let instrument_zones = Zone::create(
+            &instrument_bag,
+            &instrument_generators,
+            &instrument_modulators,
+        )?;
         let instruments =
             Instrument::create(&instrument_infos, &instrument_zones, &sample_headers)?;
 

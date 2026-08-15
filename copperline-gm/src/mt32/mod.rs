@@ -3,3 +3,4 @@
 //! rewrites a game's MIDI as it plays -- builds on these tables.
 
 pub mod tables;
+pub mod translator;

@@ -3,8 +3,8 @@
 use crate::error::SoundFontError;
 use crate::generator::Generator;
 use crate::generator_type::GeneratorType;
-use crate::modulator::Modulator;
 use crate::instrument::Instrument;
+use crate::modulator::Modulator;
 use crate::soundfont_math::SoundFontMath;
 use crate::zone::Zone;
 
