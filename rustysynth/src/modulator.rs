@@ -12,7 +12,7 @@ use crate::{binary_reader::BinaryReader, error::SoundFontError};
 /// time this way, including overriding its own defaults: a file modulator
 /// with the same source/destination/transform as a default supersedes it,
 /// and an amount of zero is how a bank switches a default off.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub(crate) struct Modulator {
     /// sfModSrcOper: the source enumerator, encoding index, CC flag,
@@ -80,7 +80,7 @@ impl Modulator {
 }
 
 /// The decoded halves of a source enumerator.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ModSource {
     /// The controller index: a general-controller number, or a MIDI CC.
     pub(crate) index: u8,
@@ -115,7 +115,183 @@ impl ModSource {
             curve: ((source >> 10) & 0x3F) as u8,
         }
     }
+
+    /// Map a raw 0..1 controller value through this source's direction,
+    /// curve and polarity.
+    ///
+    /// The curves are FluidSynth's continuous forms -- GeneralUser GS is
+    /// voiced against FluidSynth, so its tables are the behaviour banks
+    /// actually expect: concave(v) = -(40/96)*log10(1-v), convex its
+    /// mirror, both clamped to 0..1. Bipolar output mirrors the curve
+    /// around the centre into -1..1.
+    pub(crate) fn map(&self, raw: f32) -> f32 {
+        let v = raw.clamp(0.0, 1.0);
+        let v = if self.descending { 1.0 - v } else { v };
+
+        fn concave(v: f32) -> f32 {
+            if v >= 1.0 {
+                1.0
+            } else {
+                (-(40.0 / 96.0) * (1.0 - v).log10()).clamp(0.0, 1.0)
+            }
+        }
+        fn convex(v: f32) -> f32 {
+            if v <= 0.0 {
+                0.0
+            } else {
+                (1.0 + (40.0 / 96.0) * v.log10()).clamp(0.0, 1.0)
+            }
+        }
+        let unipolar = |v: f32| match self.curve {
+            1 => concave(v),
+            2 => convex(v),
+            3 => {
+                if v >= 0.5 {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            _ => v,
+        };
+
+        if self.bipolar {
+            // The curve is applied to each half, mirrored in sign, so a
+            // bipolar concave source bends symmetrically about the centre.
+            if v >= 0.5 {
+                unipolar(2.0 * v - 1.0)
+            } else {
+                -unipolar(1.0 - 2.0 * v)
+            }
+        } else {
+            unipolar(v)
+        }
+    }
 }
+
+/// The raw 0..1 value of a modulator source, before the curve.
+///
+/// Velocity and key are fixed per voice; everything else is read live so
+/// CC-driven modulators follow the controller. Sources the spec defines
+/// but games never use (link, unsupported general controllers) read as
+/// zero, which silences the modulators built on them rather than
+/// misdriving a destination.
+pub(crate) fn source_raw(
+    source: ModSource,
+    channel: &crate::channel::Channel,
+    key: i32,
+    velocity: i32,
+) -> f32 {
+    if source.is_cc {
+        return channel.get_cc(source.index) as f32 / 127.0;
+    }
+    match source.index {
+        general_controller::NONE => 1.0,
+        general_controller::NOTE_ON_VELOCITY => velocity as f32 / 127.0,
+        general_controller::NOTE_ON_KEY => key as f32 / 127.0,
+        general_controller::PITCH_WHEEL => channel.get_pitch_bend_raw(),
+        general_controller::PITCH_WHEEL_SENSITIVITY => channel.get_pitch_bend_range() / 127.0,
+        _ => 0.0,
+    }
+}
+
+impl Modulator {
+    /// This modulator's contribution, in its destination generator's own
+    /// units.
+    pub(crate) fn contribution(
+        &self,
+        channel: &crate::channel::Channel,
+        key: i32,
+        velocity: i32,
+    ) -> f32 {
+        let primary = ModSource::from_operator(self.source);
+        let mut value = source_raw(primary, channel, key, velocity);
+        value = primary.map(value);
+        if self.amount_source != 0 {
+            let secondary = ModSource::from_operator(self.amount_source);
+            value *= secondary.map(source_raw(secondary, channel, key, velocity));
+        }
+        let out = value * self.amount as f32;
+        if self.transform == 2 {
+            out.abs()
+        } else {
+            out
+        }
+    }
+
+    /// A zone's effective list: the global zone's modulators with the
+    /// local zone's applied over them, a local modulator superseding a
+    /// global one with the same routing rather than stacking with it.
+    pub(crate) fn merge(global: &[Modulator], local: &[Modulator]) -> Vec<Modulator> {
+        let mut merged: Vec<Modulator> = Vec::with_capacity(global.len() + local.len());
+        for g in global {
+            if !local.iter().any(|l| l.same_routing(g)) {
+                merged.push(*g);
+            }
+        }
+        merged.extend_from_slice(local);
+        merged
+    }
+
+    /// The contribution of a modulator whose sources are all fixed at
+    /// note-on. Sources that would need live channel state read as zero,
+    /// so this is only meaningful for modulators [`is_static`] accepts.
+    pub(crate) fn static_contribution(&self, key: i32, velocity: i32) -> f32 {
+        let fixed = |op: u16| {
+            let m = ModSource::from_operator(op);
+            let raw = if m.is_cc {
+                0.0
+            } else {
+                match m.index {
+                    general_controller::NONE => 1.0,
+                    general_controller::NOTE_ON_VELOCITY => velocity as f32 / 127.0,
+                    general_controller::NOTE_ON_KEY => key as f32 / 127.0,
+                    _ => 0.0,
+                }
+            };
+            m.map(raw)
+        };
+        let mut value = fixed(self.source);
+        if self.amount_source != 0 {
+            value *= fixed(self.amount_source);
+        }
+        let out = value * self.amount as f32;
+        if self.transform == 2 {
+            out.abs()
+        } else {
+            out
+        }
+    }
+
+    /// Whether every source this modulator reads is fixed for the life of
+    /// a voice (velocity, key, or the constant), so its contribution can
+    /// be computed once at note-on.
+    pub(crate) fn is_static(&self) -> bool {
+        let fixed = |s: u16| {
+            let m = ModSource::from_operator(s);
+            !m.is_cc
+                && matches!(
+                    m.index,
+                    general_controller::NONE
+                        | general_controller::NOTE_ON_VELOCITY
+                        | general_controller::NOTE_ON_KEY
+                )
+        };
+        fixed(self.source) && (self.amount_source == 0 || fixed(self.amount_source))
+    }
+}
+
+/// The spec's default velocity-to-attenuation routing (source 0x0502:
+/// velocity, concave, max-to-min). The synthesizer hard-codes its own
+/// velocity curve; a bank modulator with this routing supersedes it, which
+/// is how GeneralUser GS replaces the curve zone by zone.
+pub(crate) const DEFAULT_VEL_TO_ATTENUATION: Modulator = Modulator {
+    source: 0x0502,
+    destination: 48,
+    amount: 960,
+    amount_source: 0,
+    transform: 0,
+};
 
 #[cfg(test)]
 mod tests {

@@ -3,6 +3,7 @@
 use crate::error::SoundFontError;
 use crate::generator::Generator;
 use crate::generator_type::GeneratorType;
+use crate::modulator::Modulator;
 use crate::instrument::Instrument;
 use crate::soundfont_math::SoundFontMath;
 use crate::zone::Zone;
@@ -22,6 +23,10 @@ fn set_parameter(gs: &mut [i16; GeneratorType::COUNT], generator: &Generator) {
 #[non_exhaustive]
 pub struct PresetRegion {
     pub(crate) gs: [i16; GeneratorType::COUNT],
+    /// The zone's modulators, merged as on the instrument side. Preset
+    /// modulators are additive at play time: they sum with instrument
+    /// results rather than superseding them, per spec.
+    pub(crate) modulators: Vec<Modulator>,
     pub(crate) instrument: usize,
 }
 
@@ -44,6 +49,8 @@ impl PresetRegion {
             set_parameter(&mut gs, generator);
         }
 
+        let modulators = Modulator::merge(&global.modulators, &local.modulators);
+
         let instrument_id = gs[GeneratorType::INSTRUMENT as usize] as usize;
         if instrument_id >= samples.len() {
             return Err(SoundFontError::InvalidInstrumentId {
@@ -54,6 +61,7 @@ impl PresetRegion {
 
         Ok(Self {
             gs,
+            modulators,
             instrument: instrument_id,
         })
     }

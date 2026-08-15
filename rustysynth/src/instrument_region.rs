@@ -4,6 +4,7 @@ use crate::error::SoundFontError;
 use crate::generator::Generator;
 use crate::generator_type::GeneratorType;
 use crate::loop_mode::LoopMode;
+use crate::modulator::Modulator;
 use crate::sample_header::SampleHeader;
 use crate::soundfont_math::SoundFontMath;
 use crate::zone::Zone;
@@ -23,6 +24,9 @@ fn set_parameter(gs: &mut [i16; GeneratorType::COUNT], generator: &Generator) {
 #[non_exhaustive]
 pub struct InstrumentRegion {
     pub(crate) gs: [i16; GeneratorType::COUNT],
+    /// The zone's modulators: the global zone's, then the local zone's,
+    /// a local one superseding a global one with the same routing.
+    pub(crate) modulators: Vec<Modulator>,
     pub(crate) sample_start: i32,
     pub(crate) sample_end: i32,
     pub(crate) sample_start_loop: i32,
@@ -68,6 +72,8 @@ impl InstrumentRegion {
             set_parameter(&mut gs, generator);
         }
 
+        let modulators = Modulator::merge(&global.modulators, &local.modulators);
+
         let sample_id = gs[GeneratorType::SAMPLE_ID as usize] as usize;
         if sample_id >= samples.len() {
             return Err(SoundFontError::InvalidSampleId {
@@ -79,6 +85,7 @@ impl InstrumentRegion {
 
         Ok(Self {
             gs,
+            modulators,
             sample_start: sample.start,
             sample_end: sample.end,
             sample_start_loop: sample.start_loop,

@@ -21,6 +21,12 @@ impl<'a> RegionPair<'a> {
         self.preset.gs[i] as i32 + self.instrument.gs[i] as i32
     }
 
+    /// The summed raw generator value, for callers that modulate in the
+    /// generator's own units rather than through the typed getters.
+    pub(crate) fn gen_sum(&self, t: u16) -> i32 {
+        self.gs(t as usize)
+    }
+
     pub(crate) fn get_sample_start(&self) -> i32 {
         self.instrument.get_sample_start()
     }
