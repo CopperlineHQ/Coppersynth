@@ -21,6 +21,13 @@ Cargo.lock
 
 # Used for tests
 !samples/*
+
+# The panel's demo songs are part of the build (include_bytes), so they
+# ride along despite the blanket *.mid above.
+!coppersynth/demo/*.mid
+
+# macOS folder litter
+.DS_Store
 assets/
 target/
 ab-out/
