@@ -4,7 +4,7 @@
 //! soundfont.
 
 use coppersynth::engine::{GmEngine, Monitor, Mt32Mode, DRUM_PART};
-use coppersynth::panel::{Button, Dir, Feed, FrontPanel, Pair, PanelRequest};
+use coppersynth::panel::{Button, Dir, FrontPanel, Pair, PanelRequest};
 
 fn engine(mode: Mt32Mode) -> Option<GmEngine> {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../assets/GeneralUser-GS.sf2");
