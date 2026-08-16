@@ -15,8 +15,21 @@ use std::sync::Arc;
 
 use rustysynth::{SoundFont, Synthesizer, SynthesizerSettings};
 
-use crate::mt32::translator::{Event, Mt32Mode, Mt32Translator};
+pub use crate::mt32::translator::Mt32Mode;
+use crate::mt32::translator::{Event, Mt32Translator};
+
 use crate::panel::Feed;
+
+/// One of the settings the panel's pairs turn, named for the cheap
+/// per-part read the ALL screen scans with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PartSetting {
+    Level,
+    Pan,
+    Reverb,
+    Chorus,
+    KeyShift,
+}
 
 /// What the MUTE-and-ALL monitor is doing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,6 +51,15 @@ pub const DRUM_PART: usize = 9;
 
 /// Nothing sounding on this key of this part.
 const SILENT: u8 = 0xFF;
+
+/// Which of a part's settings the panel has taken over: a locked
+/// setting ignores the wire until the unit is switched off or
+/// initialised -- the game can no more turn the knob back than it
+/// could on the desk.
+const LOCK_PROGRAM: u8 = 1;
+const LOCK_PAN: u8 = 2;
+const LOCK_REVERB: u8 = 4;
+const LOCK_CHORUS: u8 = 8;
 
 /// Everything the front panel shows about one part, read live from the
 /// synthesizer rather than shadowed -- what the screen says is what is
@@ -71,6 +93,14 @@ struct Parts {
     rx_channel: [Option<u8>; PARTS],
     mute: [bool; PARTS],
     key_shift: [i8; PARTS],
+    /// The panel's LEVEL: a ceiling on the part's volume, whatever the
+    /// wire asks for.
+    level_cap: [u8; PARTS],
+    /// The volume the wire last asked for, so raising the cap restores
+    /// it.
+    wire_level: [u8; PARTS],
+    /// Settings the panel has taken over, as LOCK_ bits.
+    locks: [u8; PARTS],
     /// Where each sounding note landed after the shift, so its note-off
     /// finds it whatever the shift has become since.
     sounded: [[u8; 128]; PARTS],
@@ -86,6 +116,9 @@ impl Parts {
             rx_channel: rx,
             mute: [false; PARTS],
             key_shift: [0; PARTS],
+            level_cap: [127; PARTS],
+            wire_level: [100; PARTS],
+            locks: [0; PARTS],
             sounded: [[SILENT; 128]; PARTS],
         }
     }
@@ -240,6 +273,34 @@ impl GmEngine {
                         );
                     }
                 }
+                // A locked setting is the panel's now; the wire's word
+                // no longer reaches it.
+                0xC0 if self.parts.locks[part] & LOCK_PROGRAM != 0 => {}
+                0xB0 => {
+                    let locks = self.parts.locks[part];
+                    let handled = match data1 {
+                        7 => {
+                            // Volume passes through the cap.
+                            self.parts.wire_level[part] = data2;
+                            let capped = data2.min(self.parts.level_cap[part]);
+                            self.synth
+                                .process_midi_message(part as i32, 0xB0, 7, capped as i32);
+                            true
+                        }
+                        10 => locks & LOCK_PAN != 0,
+                        91 => locks & LOCK_REVERB != 0,
+                        93 => locks & LOCK_CHORUS != 0,
+                        _ => false,
+                    };
+                    if !handled {
+                        self.synth.process_midi_message(
+                            part as i32,
+                            0xB0,
+                            data1 as i32,
+                            data2 as i32,
+                        );
+                    }
+                }
                 _ => self.synth.process_midi_message(
                     part as i32,
                     command as i32,
@@ -311,7 +372,7 @@ impl GmEngine {
         PartView {
             instrument: (patch & 0x7F) as u8,
             name,
-            level: cc(7),
+            level: self.parts.level_cap[part.min(PARTS - 1)],
             pan: cc(10),
             reverb: cc(91),
             chorus: cc(93),
@@ -345,6 +406,48 @@ impl GmEngine {
         self.synth.channel_activity()
     }
 
+    /// Whether `part` is muted, cheap enough for every bar of every
+    /// frame.
+    pub fn part_muted(&self, part: usize) -> bool {
+        self.parts.mute.get(part).copied().unwrap_or(false)
+    }
+
+    /// One setting across a part, cheap: no name lookup. What the ALL
+    /// screen scans sixteen of.
+    pub fn part_setting(&self, part: usize, pair: PartSetting) -> i32 {
+        let cc = |controller| self.synth.channel_cc(part, controller).unwrap_or(0).into();
+        match pair {
+            PartSetting::Level => self
+                .parts
+                .level_cap
+                .get(part)
+                .copied()
+                .unwrap_or(127)
+                .into(),
+            PartSetting::Pan => cc(10),
+            PartSetting::Reverb => cc(91),
+            PartSetting::Chorus => cc(93),
+            PartSetting::KeyShift => self.parts.key_shift.get(part).copied().unwrap_or(0).into(),
+        }
+    }
+
+    /// What the soundfont calls itself, from its own metadata.
+    pub fn bank_name(&self) -> &str {
+        self.synth
+            .get_sound_font()
+            .get_info()
+            .get_bank_name()
+            .trim()
+    }
+
+    /// Switch MT-32 mode at runtime -- the panel's own switch. The
+    /// translator starts over in the new mode, and Init GS returns to
+    /// it from now on.
+    pub fn set_mt32_mode(&mut self, mode: Mt32Mode) {
+        self.translator = Mt32Translator::new(mode);
+        self.configured_mode = mode;
+    }
+
     /// Voices sounding, and the most that can.
     pub fn voices(&self) -> (usize, usize) {
         (
@@ -364,22 +467,42 @@ impl GmEngine {
         self.output_gain = gain.clamp(0.0, 1.0);
     }
 
-    /// Panel edits: each goes in as the wire message it stands for, so
-    /// an edit and a game's own writes land in exactly one place.
-    pub fn set_part_level(&mut self, part: usize, value: u8) {
-        self.part_cc(part, 7, value);
+    /// The panel's LEVEL: a cap on the part's volume. The wire's own
+    /// volume still moves underneath it and comes back when the cap is
+    /// raised.
+    pub fn set_part_level(&mut self, part: usize, cap: u8) {
+        let Some(slot) = self.parts.level_cap.get_mut(part) else {
+            return;
+        };
+        *slot = cap.min(127);
+        let capped = self.parts.wire_level[part].min(cap);
+        self.synth
+            .process_midi_message(part as i32, 0xB0, 7, capped as i32);
     }
 
+    /// The other panel edits go in as the wire message they stand for,
+    /// and lock that setting against the wire until power-off or an
+    /// initialisation -- a game re-programming its channels can no
+    /// longer turn them back.
     pub fn set_part_pan(&mut self, part: usize, value: u8) {
+        self.lock(part, LOCK_PAN);
         self.part_cc(part, 10, value);
     }
 
     pub fn set_part_reverb(&mut self, part: usize, value: u8) {
+        self.lock(part, LOCK_REVERB);
         self.part_cc(part, 91, value);
     }
 
     pub fn set_part_chorus(&mut self, part: usize, value: u8) {
+        self.lock(part, LOCK_CHORUS);
         self.part_cc(part, 93, value);
+    }
+
+    fn lock(&mut self, part: usize, bit: u8) {
+        if let Some(locks) = self.parts.locks.get_mut(part) {
+            *locks |= bit;
+        }
     }
 
     fn part_cc(&mut self, part: usize, controller: u8, value: u8) {
@@ -392,6 +515,7 @@ impl GmEngine {
     }
 
     pub fn set_part_instrument(&mut self, part: usize, program: u8) {
+        self.lock(part, LOCK_PROGRAM);
         self.synth
             .process_midi_message(part as i32, 0xC0, (program & 0x7F) as i32, 0);
     }
@@ -511,36 +635,5 @@ impl GmEngine {
                 }
             }
         }
-    }
-
-    // --- the power-on initialisations ------------------------------------
-
-    /// Init GS: back to the GS standard state, in the mode the host
-    /// configured -- auto detection is this engine's GS standard.
-    pub fn init_gs(&mut self) {
-        self.translator = Mt32Translator::new(self.configured_mode);
-        self.reset_to_defaults();
-    }
-
-    /// Init MT-32: the unit rearranged as an MT-32 -- translation on,
-    /// whatever the host configured, and the manual's reverb on every
-    /// part. A power cycle restores the configuration.
-    pub fn init_mt32(&mut self) {
-        self.translator = Mt32Translator::new(Mt32Mode::On);
-        self.reset_to_defaults();
-        for part in 0..PARTS {
-            self.set_part_reverb(part, 64);
-        }
-    }
-
-    fn reset_to_defaults(&mut self) {
-        self.synth.reset();
-        self.parts = Parts::new();
-        self.monitor = Monitor::Off;
-        self.set_master_volume_cc(127);
-        self.master_pan = 64;
-        self.master_shift = 0;
-        self.set_master_reverb(64);
-        self.set_master_chorus(64);
     }
 }

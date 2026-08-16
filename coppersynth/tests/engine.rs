@@ -222,6 +222,57 @@ fn gs_display_text_lands() {
     assert_eq!(e.take_display(), vec!["HI".to_string()]);
 }
 
+/// LEVEL is a cap: the wire's volume passes under it, is held down by
+/// it, and comes back when it lifts.
+#[test]
+fn the_level_cap_holds_the_wire_down() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    send(&mut e, &[0x90, 60, 100]);
+    let open = render_rms(&mut e, 4410);
+    assert!(open > 0.001);
+    // Cap low: the same wire volume now sounds much quieter.
+    e.set_part_level(0, 20);
+    send(&mut e, &[0x90, 64, 100]);
+    let capped = render_rms(&mut e, 4410);
+    // Lift the cap: the wire's own volume is restored.
+    e.set_part_level(0, 127);
+    send(&mut e, &[0x90, 67, 100]);
+    let lifted = render_rms(&mut e, 4410);
+    assert!(capped < open * 0.6, "the cap holds the level down");
+    assert!(lifted > capped * 2.0, "and lifting it lets the wire back");
+    // The wire cannot climb over it either.
+    e.set_part_level(0, 20);
+    send(&mut e, &[0xB0, 7, 127, 0x90, 72, 100]);
+    let pinned = render_rms(&mut e, 4410);
+    assert!(pinned < open, "full wire volume stays under the cap");
+}
+
+/// A panel edit holds against the wire until the unit is reset: the
+/// game can no more turn it back than it could on the desk.
+#[test]
+fn panel_edits_hold_against_the_wire() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    e.set_part_instrument(0, 19);
+    e.set_part_reverb(0, 100);
+    e.set_part_pan(0, 10);
+    send(&mut e, &[0xC0, 5, 0xB0, 91, 3, 0xB0, 10, 64]);
+    let view = e.part_view(0);
+    assert_eq!(view.instrument, 19, "the program is the panel's");
+    assert_eq!(view.reverb, 100);
+    assert_eq!(view.pan, 10);
+    // An untouched part still follows the wire.
+    send(&mut e, &[0xC1, 5]);
+    assert_eq!(e.part_view(1).instrument, 5);
+    // Reset clears the locks; the wire speaks again.
+    e.reset();
+    send(&mut e, &[0xC0, 7]);
+    assert_eq!(e.part_view(0).instrument, 7);
+}
+
 /// The layer's bounds hold: parts count, and out-of-range accessors
 /// answer rather than panic.
 #[test]

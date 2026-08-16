@@ -1,10 +1,9 @@
-//! The front panel against the manual: what its buttons do to the
-//! engine, and what the glass shows for it. All timing is explicit
-//! milliseconds, so every screen here is deterministic. Skips quietly
-//! without the local soundfont.
+//! The front panel: what its buttons do to the engine, and what the
+//! glass shows for it. All timing is explicit milliseconds, so every
+//! screen here is deterministic. Skips quietly without the local
+//! soundfont.
 
-use coppersynth::engine::{GmEngine, Monitor, DRUM_PART};
-use coppersynth::mt32::translator::Mt32Mode;
+use coppersynth::engine::{GmEngine, Monitor, Mt32Mode, DRUM_PART};
 use coppersynth::panel::{Button, Dir, Feed, FrontPanel, Pair, PanelRequest};
 
 fn engine(mode: Mt32Mode) -> Option<GmEngine> {
@@ -15,10 +14,10 @@ fn engine(mode: Mt32Mode) -> Option<GmEngine> {
     Some(GmEngine::open(std::path::Path::new(path), 44_100, mode).expect("engine opens"))
 }
 
+/// Draw once at zero to start the boot line, then step past it.
 fn settled(panel: &mut FrontPanel, engine: &GmEngine) {
-    // Draw once at zero to start the greeting, then step past it.
     panel.screen(engine, 0);
-    panel.screen(engine, 2_000);
+    panel.screen(engine, 3_100);
 }
 
 fn send(engine: &mut GmEngine, bytes: &[u8]) {
@@ -38,10 +37,11 @@ fn dt1(model: u8, addr: [u8; 3], data: &[u8]) -> Vec<u8> {
     msg
 }
 
-/// Power-on: COPPERSYNTH holds the glass, then the part screen with
-/// the soundfont's own name for the piano.
+/// Power-on: COPPERSYNTH holds the glass, the soundfont introduces
+/// itself by its own name, and the part screen follows with the LEVEL
+/// cap wide open.
 #[test]
-fn the_greeting_gives_way_to_part_one() {
+fn the_boot_line_greets_and_names_the_bank() {
     let Some(e) = engine(Mt32Mode::Off) else {
         return;
     };
@@ -49,11 +49,15 @@ fn the_greeting_gives_way_to_part_one() {
     let greeting = panel.screen(&e, 0);
     assert_eq!(greeting.name, "COPPERSYNTH");
     assert_eq!(greeting.part, "");
-    let home = panel.screen(&e, 1_600);
+    let bank = panel.screen(&e, 1_600);
+    let expect: String = e.bank_name().chars().take(16).collect();
+    assert!(!expect.is_empty(), "GeneralUser names itself");
+    assert_eq!(bank.name, expect);
+    let home = panel.screen(&e, 3_100);
     assert_eq!(home.part, "01");
     assert_eq!(home.instrument, "001");
     assert!(!home.name.is_empty());
-    assert_eq!(home.level, "100");
+    assert_eq!(home.level, "127", "the cap starts wide open");
     assert_eq!(home.pan, "0");
     assert_eq!(home.reverb, "40");
     assert_eq!(home.chorus, "0");
@@ -70,14 +74,14 @@ fn part_arrows_walk_and_wrap() {
     let mut panel = FrontPanel::default();
     settled(&mut panel, &e);
     panel.button(&mut e, Button::Arrow(Pair::Part, Dir::Left));
-    assert_eq!(panel.screen(&e, 3_000).part, "16");
+    assert_eq!(panel.screen(&e, 4_000).part, "16");
     panel.button(&mut e, Button::Arrow(Pair::Part, Dir::Right));
     panel.button(&mut e, Button::Arrow(Pair::Part, Dir::Right));
-    assert_eq!(panel.screen(&e, 3_000).part, "02");
+    assert_eq!(panel.screen(&e, 4_000).part, "02");
 }
 
 /// INSTRUMENT arrows change the program; on the drum part they step
-/// the manual's ten sets and the name wears the asterisk.
+/// the ten sets and the name wears the asterisk.
 #[test]
 fn instrument_arrows_step_programs_and_kits() {
     let Some(mut e) = engine(Mt32Mode::Off) else {
@@ -87,70 +91,82 @@ fn instrument_arrows_step_programs_and_kits() {
     settled(&mut panel, &e);
     panel.button(&mut e, Button::Arrow(Pair::Instrument, Dir::Right));
     assert_eq!(e.part_view(0).instrument, 1);
-    assert_eq!(panel.screen(&e, 3_000).instrument, "002");
+    assert_eq!(panel.screen(&e, 4_000).instrument, "002");
     for _ in 0..9 {
         panel.button(&mut e, Button::Arrow(Pair::Part, Dir::Right));
     }
-    let screen = panel.screen(&e, 3_000);
+    let screen = panel.screen(&e, 4_000);
     assert_eq!(screen.part, "10");
     assert!(screen.name.starts_with('*'), "a drum set wears the star");
     panel.button(&mut e, Button::Arrow(Pair::Instrument, Dir::Right));
     assert_eq!(e.part_view(DRUM_PART).instrument, 8, "Room is the next set");
 }
 
-/// Value arrows edit the selected part in the synthesizer itself.
+/// Value arrows edit the selected part in the synthesizer itself; a
+/// panel edit then holds against the wire.
 #[test]
-fn value_arrows_edit_the_part() {
+fn value_arrows_edit_and_hold() {
     let Some(mut e) = engine(Mt32Mode::Off) else {
         return;
     };
     let mut panel = FrontPanel::default();
     settled(&mut panel, &e);
-    panel.button(&mut e, Button::Arrow(Pair::Level, Dir::Right));
+    panel.button(&mut e, Button::Arrow(Pair::Level, Dir::Left));
     panel.button(&mut e, Button::Arrow(Pair::Pan, Dir::Left));
     panel.button(&mut e, Button::Arrow(Pair::Reverb, Dir::Right));
     panel.button(&mut e, Button::Arrow(Pair::KeyShift, Dir::Left));
     panel.button(&mut e, Button::Arrow(Pair::MidiCh, Dir::Right));
     let view = e.part_view(0);
-    assert_eq!(view.level, 101);
+    assert_eq!(view.level, 126, "LEVEL is the cap");
     assert_eq!(view.pan, 63);
     assert_eq!(view.reverb, 41);
     assert_eq!(view.key_shift, -1);
     assert_eq!(view.rx_channel, Some(1));
-    let screen = panel.screen(&e, 3_000);
+    let screen = panel.screen(&e, 4_000);
     assert_eq!(screen.pan, "L1");
     assert_eq!(screen.key_shift, "-1");
     assert_eq!(screen.midi_ch, "02");
+    // The game re-programs its channels; the panel's word stands.
+    send(&mut e, &[0xB0, 10, 20, 0xB0, 91, 5]);
+    let view = e.part_view(0);
+    assert_eq!(view.pan, 63, "pan is locked to the panel's setting");
+    assert_eq!(view.reverb, 41, "reverb too");
     // Sixteen steps later the channel has been through Off and round.
     for _ in 0..15 {
         panel.button(&mut e, Button::Arrow(Pair::MidiCh, Dir::Right));
     }
-    assert_eq!(panel.screen(&e, 3_000).midi_ch, "Off");
+    assert_eq!(panel.screen(&e, 4_000).midi_ch, "Off");
     panel.button(&mut e, Button::Arrow(Pair::MidiCh, Dir::Right));
-    assert_eq!(panel.screen(&e, 3_000).midi_ch, "01");
+    assert_eq!(panel.screen(&e, 4_000).midi_ch, "01");
 }
 
-/// ALL mode: the line reads ALL, and the pairs turn the masters --
-/// LEVEL the master volume, MIDI CH the device ID.
+/// ALL mode: the line reads ALL, and the pairs set every part at once
+/// -- uniform values read out, mixed ones shrug.
 #[test]
-fn all_mode_turns_the_masters() {
+fn all_mode_broadcasts_to_every_part() {
     let Some(mut e) = engine(Mt32Mode::Off) else {
         return;
     };
     let mut panel = FrontPanel::default();
     settled(&mut panel, &e);
     panel.button(&mut e, Button::All);
-    let screen = panel.screen(&e, 3_000);
+    let screen = panel.screen(&e, 4_000);
     assert_eq!(screen.part, "ALL");
     assert!(screen.all_led);
     assert_eq!(screen.level, "127");
     assert_eq!(screen.midi_ch, "17", "the factory device ID");
     panel.button(&mut e, Button::Arrow(Pair::Level, Dir::Left));
-    panel.button(&mut e, Button::Arrow(Pair::MidiCh, Dir::Left));
-    assert_eq!(e.master_volume_cc(), 126);
-    assert_eq!(e.device_id(), 16);
     panel.button(&mut e, Button::Arrow(Pair::KeyShift, Dir::Right));
-    assert_eq!(e.master_key_shift(), 1);
+    for p in [0, 7, 15] {
+        assert_eq!(e.part_view(p).level, 126, "the cap lands on part {p}");
+        assert_eq!(e.part_view(p).key_shift, 1);
+    }
+    assert_eq!(panel.screen(&e, 4_000).level, "126");
+    // One part out of step and the read-out shrugs.
+    e.set_part_reverb(2, 90);
+    assert_eq!(panel.screen(&e, 4_000).reverb, "---");
+    panel.button(&mut e, Button::Arrow(Pair::MidiCh, Dir::Left));
+    assert_eq!(e.device_id(), 16);
 }
 
 /// MUTE gates the shown part and the screen says so; in ALL mode it
@@ -164,21 +180,21 @@ fn mute_by_part_and_all_at_once() {
     settled(&mut panel, &e);
     panel.button(&mut e, Button::Mute);
     assert!(e.part_view(0).muted);
-    assert!(panel.screen(&e, 3_000).mute_led);
-    let bars = panel.screen(&e, 3_000).bars;
+    assert!(panel.screen(&e, 4_000).mute_led);
+    let bars = panel.screen(&e, 4_000).bars;
     assert_eq!(bars[0] & 1, 0, "a muted part loses its baseline dot");
     assert_eq!(bars[1] & 1, 1);
     panel.button(&mut e, Button::Mute);
     assert!(!e.part_view(0).muted);
     panel.button(&mut e, Button::All);
     panel.button(&mut e, Button::Mute);
-    assert!((0..16).all(|p| e.part_view(p).muted));
+    assert!((0..16).all(|p| e.part_muted(p)));
     panel.button(&mut e, Button::Mute);
-    assert!((0..16).all(|p| !e.part_view(p).muted));
+    assert!((0..16).all(|p| !e.part_muted(p)));
 }
 
 /// ALL+MUTE monitors: the shown part solos, and moving the selection
-/// moves the solo, as the manual has it.
+/// moves the solo.
 #[test]
 fn monitor_solos_the_shown_part() {
     let Some(mut e) = engine(Mt32Mode::Off) else {
@@ -200,51 +216,48 @@ fn monitor_solos_the_shown_part() {
     assert_eq!(e.monitor(), Monitor::Off);
 }
 
-/// The power-on combinations: INSTRUMENT ◄ prompts Init MT-32 in the
-/// manual's own words, ALL executes it, and translation is then on.
+/// INSTRUMENT ► held through the power-on asks the MT-32 question,
+/// lamps flashing; ALL answers yes and the choice reaches the host.
 #[test]
-fn init_mt32_from_the_fascia() {
-    let Some(mut e) = engine(Mt32Mode::Off) else {
-        return;
-    };
-    let mut panel = FrontPanel::default();
-    panel.power_on_held(&[Button::Arrow(Pair::Instrument, Dir::Left)]);
-    settled(&mut panel, &e);
-    let prompt = panel.screen(&e, 3_000);
-    assert_eq!(prompt.name, "Init MT-32,Sure?");
-    assert!(!e.translating());
-    let request = panel.button(&mut e, Button::All);
-    assert_eq!(request, None);
-    assert!(e.translating(), "the unit is an MT-32 now");
-    assert_eq!(e.part_view(0).reverb, 64, "with the manual's reverb");
-    assert_eq!(panel.screen(&e, 4_000).part, "01");
-}
-
-/// MUTE cancels a prompt, and Init All asks the host for a power
-/// cycle rather than guessing at the configuration.
-#[test]
-fn prompts_cancel_and_init_all_recycles() {
+fn the_mt32_prompt_enables_translation() {
     let Some(mut e) = engine(Mt32Mode::Off) else {
         return;
     };
     let mut panel = FrontPanel::default();
     panel.power_on_held(&[Button::Arrow(Pair::Instrument, Dir::Right)]);
-    settled(&mut panel, &e);
-    assert_eq!(panel.screen(&e, 3_000).name, "Init GS, Sure?");
-    panel.button(&mut e, Button::Mute);
-    assert_eq!(panel.screen(&e, 3_000).part, "01", "cancelled, home again");
-
-    let mut panel = FrontPanel::default();
-    panel.power_on_held(&[Button::Both(Pair::Instrument)]);
-    settled(&mut panel, &e);
-    assert_eq!(panel.screen(&e, 3_000).name, "Init All, Sure?");
-    assert_eq!(
-        panel.button(&mut e, Button::All),
-        Some(PanelRequest::Recycle)
-    );
+    let prompt = panel.screen(&e, 0);
+    assert_eq!(prompt.name, "MT-32, Sure?");
+    assert!(prompt.all_led, "the lamps flash on this half-second");
+    assert!(prompt.mute_led);
+    let off_beat = panel.screen(&e, 500);
+    assert!(!off_beat.all_led, "and off on the other");
+    assert!(!e.translating());
+    let request = panel.button(&mut e, Button::All);
+    assert_eq!(request, Some(PanelRequest::Mt32Mode(Mt32Mode::On)));
+    assert!(e.translating(), "the unit is an MT-32 now");
+    assert_eq!(panel.screen(&e, 1_000).name, "MT-32 Enabled");
+    assert_eq!(panel.screen(&e, 3_200).part, "01", "the notice passes");
 }
 
-/// The undocumented screen, straight from the library.
+/// MUTE answers no: translation is off for good, and says so.
+#[test]
+fn the_mt32_prompt_disables_translation() {
+    let Some(mut e) = engine(Mt32Mode::Auto) else {
+        return;
+    };
+    let mut panel = FrontPanel::default();
+    panel.power_on_held(&[Button::Arrow(Pair::Instrument, Dir::Right)]);
+    panel.screen(&e, 0);
+    let request = panel.button(&mut e, Button::Mute);
+    assert_eq!(request, Some(PanelRequest::Mt32Mode(Mt32Mode::Off)));
+    assert_eq!(panel.screen(&e, 500).name, "MT-32 Disabled");
+    // Auto detection is off with it: MT-32 sysex no longer activates.
+    send(&mut e, &dt1(0x16, [0x20, 0x00, 0x00], b"HELLO"));
+    assert!(!e.translating());
+}
+
+/// The undocumented screen, straight from the library, with the boot
+/// line stood down for it.
 #[test]
 fn the_version_combo_says_hobbo() {
     let Some(mut e) = engine(Mt32Mode::Off) else {
@@ -252,35 +265,71 @@ fn the_version_combo_says_hobbo() {
     };
     let mut panel = FrontPanel::default();
     panel.power_on_held(&[Button::All, Button::Mute]);
-    settled(&mut panel, &e);
-    let screen = panel.screen(&e, 3_000);
+    let screen = panel.screen(&e, 0);
     assert_eq!(
         screen.name,
         format!("ver{} hobbo91", env!("CARGO_PKG_VERSION"))
     );
     panel.button(&mut e, Button::Mute);
-    assert_eq!(panel.screen(&e, 3_000).part, "01", "any press leaves");
+    assert_eq!(panel.screen(&e, 100).part, "01", "any press leaves");
 }
 
-/// A Displayed Letter takes the line, scrolls when long, and falls
-/// away; the value rows stay live underneath.
+/// Both MIDI CH halves and both INSTRUMENT halves: the unit says its
+/// own name and version, then boots as normal.
 #[test]
-fn letters_take_the_line_and_scroll() {
+fn the_splash_egg_boots_verbose() {
+    let Some(e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    let mut panel = FrontPanel::default();
+    panel.power_on_held(&[Button::Both(Pair::MidiCh), Button::Both(Pair::Instrument)]);
+    let splash = panel.screen(&e, 0);
+    assert_eq!(
+        splash.name,
+        format!("Coppersynth {}", env!("CARGO_PKG_VERSION"))
+    );
+    assert_eq!(splash.part, "");
+    assert_eq!(panel.screen(&e, 2_000).name, "COPPERSYNTH");
+    let bank: String = e.bank_name().chars().take(16).collect();
+    assert_eq!(panel.screen(&e, 3_500).name, bank);
+    assert_eq!(panel.screen(&e, 5_000).part, "01");
+}
+
+/// A game's letter takes the line and stays until a button sends it
+/// away; that press is spent on the dismissal.
+#[test]
+fn letters_stay_until_dismissed() {
     let Some(mut e) = engine(Mt32Mode::Off) else {
         return;
     };
     let mut panel = FrontPanel::default();
     settled(&mut panel, &e);
-    send(&mut e, &dt1(0x45, [0x10, 0x00, 0x00], b"HELLO"));
+    send(&mut e, &dt1(0x45, [0x10, 0x00, 0x00], b"<< SIERRA >>"));
     for feed in e.take_panel_feed() {
         panel.feed(feed);
     }
-    let screen = panel.screen(&e, 10_000);
-    assert_eq!(screen.name, "HELLO");
-    assert_eq!(screen.part, "");
-    assert_eq!(screen.level, "100", "values stay live under a letter");
-    assert_eq!(panel.screen(&e, 14_000).part, "01", "and it falls away");
+    assert_eq!(panel.screen(&e, 10_000).name, "<< SIERRA >>");
+    assert_eq!(
+        panel.screen(&e, 600_000).name,
+        "<< SIERRA >>",
+        "it does not time out"
+    );
+    assert_eq!(panel.screen(&e, 600_000).level, "127", "values stay live");
+    // The dismissing press does nothing else.
+    panel.button(&mut e, Button::All);
+    let screen = panel.screen(&e, 600_100);
+    assert_eq!(screen.part, "01", "home again");
+    assert!(!screen.all_led, "the press was spent on the letter");
+}
 
+/// A long letter scrolls, rests on its tail, and comes round again.
+#[test]
+fn long_letters_scroll_round() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    let mut panel = FrontPanel::default();
+    settled(&mut panel, &e);
     send(
         &mut e,
         &dt1(0x45, [0x10, 0x00, 0x00], b"THE QUICK BROWN FOX JUMPS"),
@@ -289,9 +338,13 @@ fn letters_take_the_line_and_scroll() {
         panel.feed(feed);
     }
     assert_eq!(panel.screen(&e, 20_000).name, "THE QUICK BROWN ");
-    // One rest, one step: the window has moved a column.
-    let scrolled = panel.screen(&e, 20_000 + 600 + 300);
-    assert_eq!(scrolled.name, "HE QUICK BROWN F");
+    assert_eq!(
+        panel.screen(&e, 20_000 + 600 + 300).name,
+        "HE QUICK BROWN F"
+    );
+    // One full cycle later it is back at the head.
+    let cycle = 600 + 9 * 300 + 1500;
+    assert_eq!(panel.screen(&e, 20_000 + cycle).name, "THE QUICK BROWN ");
 }
 
 /// A dot picture owns the matrix for a moment, exactly as mapped in
@@ -303,8 +356,6 @@ fn a_picture_takes_the_bars() {
     };
     let mut panel = FrontPanel::default();
     settled(&mut panel, &e);
-    // Light the whole top row: bytes 0, 16, 32 all five bits, byte 48
-    // its single usable bit.
     let mut dots = [0u8; 64];
     dots[0] = 0x1F;
     dots[16] = 0x1F;
@@ -332,16 +383,17 @@ fn a_pair_together_shows_the_staircase() {
     let mut panel = FrontPanel::default();
     settled(&mut panel, &e);
     panel.button(&mut e, Button::Both(Pair::MidiCh));
-    let screen = panel.screen(&e, 3_000);
+    let screen = panel.screen(&e, 4_000);
     for (part, bar) in screen.bars.iter().enumerate() {
         assert_eq!(bar.count_ones(), part as u32 + 1, "one more dot a part");
     }
     panel.button(&mut e, Button::Both(Pair::MidiCh));
-    let screen = panel.screen(&e, 3_100);
+    let screen = panel.screen(&e, 4_100);
     assert_eq!(screen.bars[15] & 1, 1, "back to the meters");
 }
 
-/// Sounding notes raise the meters; silence lets them fall.
+/// Sounding notes raise the meters; silence lets them fall, peak dot
+/// and all.
 #[test]
 fn the_meters_move_with_the_music() {
     let Some(mut e) = engine(Mt32Mode::Off) else {
@@ -352,15 +404,17 @@ fn the_meters_move_with_the_music() {
     send(&mut e, &[0x90, 60, 120]);
     let mut block = vec![(0f32, 0f32); 4410];
     e.render(&mut block);
-    let loud = panel.screen(&e, 3_000).bars[0];
+    let loud = panel.screen(&e, 4_000).bars[0];
     assert!(loud.count_ones() > 2, "a fortissimo note stacks dots");
     send(&mut e, &[0x80, 60, 0]);
     for _ in 0..40 {
         e.render(&mut block);
     }
-    let quiet = panel.screen(&e, 13_000).bars[0];
-    assert!(
-        quiet.count_ones() <= 2,
-        "released and fallen, at most a baseline and a peak dot"
-    );
+    // Step time forward the way frames would, so the fall and the
+    // peak's descent both run their course.
+    for at in 0..60 {
+        panel.screen(&e, 4_100 + at * 100);
+    }
+    let quiet = panel.screen(&e, 10_200).bars[0];
+    assert_eq!(quiet, 1, "released and fallen: just the baseline");
 }

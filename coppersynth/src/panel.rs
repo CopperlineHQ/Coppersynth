@@ -2,18 +2,16 @@
 //!
 //! Everything the LCD shows is composed here, in the library -- the host
 //! draws glass and buttons and forwards presses, and never invents a
-//! character of its own. The layout and behaviour follow the Sound
-//! Canvas SC-55 owner's manual: ALL and MUTE with their lamps, eight
-//! left/right pairs, the sixteen-column bar matrix with a dot of peak
-//! hold, letters and dot pictures a game writes over sysex, and the
-//! power-on button combinations -- including the unit's own way of
-//! being told it is an MT-32 today.
+//! character of its own. The layout follows the Sound Canvas: ALL and
+//! MUTE with their lamps, eight left/right pairs, the sixteen-column bar
+//! matrix with a dot of peak hold, and letters and dot pictures a game
+//! writes over sysex.
 //!
 //! What the real unit keeps in menus (master tune, LCD contrast, bar
 //! display types, bulk dumps, Micro Edit) is not modelled; the panel is
 //! for playing games at, not servicing.
 
-use crate::engine::{GmEngine, Monitor, PARTS};
+use crate::engine::{GmEngine, Monitor, Mt32Mode, PartSetting, PARTS};
 
 /// One side of a left/right pair.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,7 +20,7 @@ pub enum Dir {
     Right,
 }
 
-/// The eight left/right pairs, top to bottom as the fascia stacks them.
+/// The eight left/right pairs, as the fascia groups them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pair {
     Part,
@@ -51,7 +49,8 @@ pub enum Button {
 /// Text or a picture the engine took off the wire for the display.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Feed {
-    /// A Displayed Letter: up to 32 characters, scrolled when long.
+    /// A Displayed Letter: it takes the name line and stays until a
+    /// button sends it away.
     Text(String),
     /// A Displayed Dot Data frame, rows top to bottom, bit `c` = column.
     Picture([u16; 16]),
@@ -64,7 +63,7 @@ pub struct Screen {
     /// The PART field: `01`..`16`, `ALL`, or empty while a message or a
     /// start screen owns the line.
     pub part: String,
-    /// The INSTRUMENT number field: `001`..`128`, or empty.
+    /// The INST number field: `001`..`128`, or empty.
     pub instrument: String,
     /// The name area: instrument name, message text, or a prompt.
     pub name: String,
@@ -84,21 +83,12 @@ pub struct Screen {
     pub translating: bool,
 }
 
-/// Something the panel cannot do to the engine it is given and asks the
-/// host for instead.
+/// Something the panel cannot do alone and asks the host to mirror.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PanelRequest {
-    /// Init All: power the unit off and on again, back to the host's
-    /// configuration.
-    Recycle,
-}
-
-/// The three initialisations the unit offers at power-on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Init {
-    Gs,
-    Mt32,
-    All,
+    /// MT-32 mode was switched at the fascia; the host should carry the
+    /// choice into its own options so a power cycle keeps it.
+    Mt32Mode(Mt32Mode),
 }
 
 /// What the panel is showing over the home screen, if anything.
@@ -107,40 +97,51 @@ enum Mode {
     Home,
     /// A pair held together: its values across the parts, as bars.
     View(Pair),
-    /// An init prompt: ALL executes, MUTE cancels.
-    Confirm(Init),
+    /// "MT-32, Sure?" -- ALL turns it on, MUTE turns it off.
+    ConfirmMt32,
     /// The undocumented screen. Any press leaves it.
     Version,
 }
 
-/// A Displayed Letter in flight.
+/// A message on the name line.
 #[derive(Debug, Clone)]
-struct Message {
-    text: Vec<char>,
-    /// When it went up; set the first time it is drawn.
-    started: Option<u64>,
+enum Message {
+    /// A game's letter: stays until a button sends it away, scrolling
+    /// round when it is long.
+    Letter {
+        text: Vec<char>,
+        started: Option<u64>,
+    },
+    /// The panel's own notice: says its piece and goes.
+    Notice { text: String, started: Option<u64> },
 }
 
-/// How long the greeting holds the glass at power-on.
+/// The boot line: an optional version splash, the greeting, then the
+/// soundfont introducing itself by its own name.
+const SPLASH_MS: u64 = 1800;
 const GREETING_MS: u64 = 1500;
-/// How long a letter that fits stays up.
-const LETTER_HOLD_MS: u64 = 3000;
-/// A long letter rests, then steps one column at a time.
+const BANK_MS: u64 = 1500;
+/// How long a notice stays up.
+const NOTICE_MS: u64 = 2000;
+/// A long letter rests, steps a column at a time, rests on its tail,
+/// and comes round again.
 const SCROLL_START_MS: u64 = 600;
 const SCROLL_STEP_MS: u64 = 300;
-/// And holds its tail before the display falls back.
-const SCROLL_TAIL_MS: u64 = 2000;
+const SCROLL_TAIL_MS: u64 = 1500;
 /// How long a dot picture holds the matrix past its last frame.
 const PICTURE_MS: u64 = 3000;
-/// The text area's width in characters; longer letters scroll by.
+/// The prompt's lamps flash about once a second.
+const FLASH_MS: u64 = 500;
+/// The text area's width in characters.
 pub const NAME_COLS: usize = 16;
 /// The bar matrix: sixteen columns of sixteen dots.
 pub const BAR_ROWS: u32 = 16;
 /// How fast a bar falls once the sound under it has, full scale per
-/// second, and how long the peak dot holds before it falls too.
-const BAR_FALL_PER_MS: f32 = 0.004;
+/// millisecond; the peak dot holds, then falls a row at a time.
+const BAR_FALL_PER_MS: f32 = 0.006;
 const PEAK_HOLD_MS: u64 = 600;
-/// The ten drum sets, by program number, as the manual lists them.
+const PEAK_FALL_MS: u64 = 45;
+/// The ten drum sets, by program number, as the SC-55 lists them.
 const DRUM_SETS: [u8; 10] = [0, 8, 16, 24, 25, 32, 40, 48, 56, 127];
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -157,9 +158,10 @@ pub struct FrontPanel {
     all: bool,
     part: usize,
     mode: Mode,
-    /// The greeting: pending until first drawn, then timed out.
-    greeting_started: Option<u64>,
-    greeting_done: bool,
+    /// Whether the boot line opens with the version splash.
+    splash: bool,
+    boot_started: Option<u64>,
+    boot_done: bool,
     message: Option<Message>,
     picture: Option<([u16; PARTS], Option<u64>)>,
     /// The matrix as displayed: live level with a fall, and a peak dot.
@@ -174,8 +176,9 @@ impl Default for FrontPanel {
             all: false,
             part: 0,
             mode: Mode::Home,
-            greeting_started: None,
-            greeting_done: false,
+            splash: false,
+            boot_started: None,
+            boot_done: false,
             message: None,
             picture: None,
             shown: [0.0; PARTS],
@@ -187,50 +190,60 @@ impl Default for FrontPanel {
 
 impl FrontPanel {
     /// The buttons held while the power came on, read the way the unit
-    /// reads its own fascia at start-up.
+    /// reads its own fascia at start-up. (Both INSTRUMENT halves alone
+    /// are the host's: they put the default soundfont back before the
+    /// unit even exists.)
     pub fn power_on_held(&mut self, held: &[Button]) {
         let is =
             |want: &[Button]| held.len() == want.len() && want.iter().all(|b| held.contains(b));
-        self.mode = if is(&[Button::Both(Pair::Part)]) {
-            // The unit inits and then offers ROM play; there are no
-            // songs in this one, so the init is what remains.
-            Mode::Confirm(Init::Gs)
-        } else if is(&[Button::Arrow(Pair::Instrument, Dir::Right)]) {
-            Mode::Confirm(Init::Gs)
-        } else if is(&[Button::Arrow(Pair::Instrument, Dir::Left)]) {
-            Mode::Confirm(Init::Mt32)
-        } else if is(&[Button::Both(Pair::Instrument)]) {
-            Mode::Confirm(Init::All)
+        if is(&[Button::Arrow(Pair::Instrument, Dir::Right)]) {
+            // A unit switched on into a service screen skips its boot
+            // line; the question is the greeting.
+            self.mode = Mode::ConfirmMt32;
+            self.boot_done = true;
         } else if is(&[Button::All, Button::Mute]) {
             // Undocumented, as the tradition demands.
-            Mode::Version
-        } else {
-            Mode::Home
-        };
+            self.mode = Mode::Version;
+            self.boot_done = true;
+        } else if is(&[Button::Both(Pair::MidiCh), Button::Both(Pair::Instrument)]) {
+            // Undocumented too: the unit says its own name and version,
+            // then boots as normal.
+            self.splash = true;
+        }
     }
 
-    /// A press. Anything the panel cannot reach on the engine comes
-    /// back as a request.
+    /// A press. Anything the panel cannot mirror alone comes back as a
+    /// request for the host.
     pub fn button(&mut self, engine: &mut GmEngine, b: Button) -> Option<PanelRequest> {
         // The version screen leaves on any press, saying nothing.
         if self.mode == Mode::Version {
             self.mode = Mode::Home;
             return None;
         }
-        // A prompt takes ALL as yes and MUTE as no, and ignores the
-        // rest, as the unit's confirmations do.
-        if let Mode::Confirm(init) = self.mode {
+        // The MT-32 prompt takes ALL as on and MUTE as off, and ignores
+        // the rest.
+        if self.mode == Mode::ConfirmMt32 {
             return match b {
                 Button::All => {
                     self.mode = Mode::Home;
-                    self.run_init(engine, init)
+                    engine.set_mt32_mode(Mt32Mode::On);
+                    self.notice("MT-32 Enabled");
+                    Some(PanelRequest::Mt32Mode(Mt32Mode::On))
                 }
                 Button::Mute => {
                     self.mode = Mode::Home;
-                    None
+                    engine.set_mt32_mode(Mt32Mode::Off);
+                    self.notice("MT-32 Disabled");
+                    Some(PanelRequest::Mt32Mode(Mt32Mode::Off))
                 }
                 _ => None,
             };
+        }
+        // A game's letter stays until a button sends it away; that
+        // press is spent on the dismissal.
+        if matches!(self.message, Some(Message::Letter { .. })) {
+            self.message = None;
+            return None;
         }
         match b {
             Button::All => self.all = !self.all,
@@ -252,7 +265,7 @@ impl FrontPanel {
     pub fn feed(&mut self, feed: Feed) {
         match feed {
             Feed::Text(text) => {
-                self.message = Some(Message {
+                self.message = Some(Message::Letter {
                     text: text.chars().take(32).collect(),
                     started: None,
                 });
@@ -279,16 +292,11 @@ impl FrontPanel {
     pub fn screen(&mut self, engine: &GmEngine, now_ms: u64) -> Screen {
         let bars = self.compose_bars(engine, now_ms);
         let mut screen = self.home_screen(engine, bars);
-        // The greeting holds the whole line first.
-        if !self.greeting_done {
-            let started = *self.greeting_started.get_or_insert(now_ms);
-            if now_ms.saturating_sub(started) < GREETING_MS {
-                screen.part = String::new();
-                screen.instrument = String::new();
-                screen.name = "COPPERSYNTH".to_string();
-                return screen;
-            }
-            self.greeting_done = true;
+        if let Some(boot_line) = self.boot_line(engine, now_ms) {
+            screen.part = String::new();
+            screen.instrument = String::new();
+            screen.name = boot_line;
+            return screen;
         }
         match self.mode {
             Mode::Version => {
@@ -296,19 +304,18 @@ impl FrontPanel {
                 screen.instrument = String::new();
                 screen.name = format!("ver{} hobbo91", env!("CARGO_PKG_VERSION"));
             }
-            Mode::Confirm(init) => {
+            Mode::ConfirmMt32 => {
                 screen.part = String::new();
                 screen.instrument = String::new();
-                // The manual's own prompts, spacing included.
-                screen.name = match init {
-                    Init::Gs => "Init GS, Sure?",
-                    Init::Mt32 => "Init MT-32,Sure?",
-                    Init::All => "Init All, Sure?",
-                }
-                .to_string();
+                screen.name = "MT-32, Sure?".to_string();
+                // ALL says yes and MUTE says no; their lamps flash to
+                // say the question is theirs.
+                let flash_on = (now_ms / FLASH_MS).is_multiple_of(2);
+                screen.all_led = flash_on;
+                screen.mute_led = flash_on;
             }
             Mode::Home | Mode::View(_) => {
-                if let Some(text) = self.letter_window(now_ms) {
+                if let Some(text) = self.message_line(now_ms) {
                     screen.part = String::new();
                     screen.instrument = String::new();
                     screen.name = text;
@@ -318,17 +325,44 @@ impl FrontPanel {
         screen
     }
 
+    /// The boot line while it runs: version splash if asked for, the
+    /// greeting, then the soundfont's own name.
+    fn boot_line(&mut self, engine: &GmEngine, now_ms: u64) -> Option<String> {
+        if self.boot_done {
+            return None;
+        }
+        let started = *self.boot_started.get_or_insert(now_ms);
+        let mut elapsed = now_ms.saturating_sub(started);
+        if self.splash {
+            if elapsed < SPLASH_MS {
+                return Some(format!("Coppersynth {}", env!("CARGO_PKG_VERSION")));
+            }
+            elapsed -= SPLASH_MS;
+        }
+        if elapsed < GREETING_MS {
+            return Some("COPPERSYNTH".to_string());
+        }
+        if elapsed < GREETING_MS + BANK_MS {
+            let bank: String = engine.bank_name().chars().take(NAME_COLS).collect();
+            if !bank.is_empty() {
+                return Some(bank);
+            }
+        }
+        self.boot_done = true;
+        None
+    }
+
     // --- buttons ---------------------------------------------------------
 
     fn press_mute(&mut self, engine: &mut GmEngine) {
         if self.all {
             // Mute everything, or let everything go.
-            let any_open = (0..PARTS).any(|p| !engine.part_view(p).muted);
+            let any_open = (0..PARTS).any(|p| !engine.part_muted(p));
             for p in 0..PARTS {
                 engine.set_part_mute(p, any_open);
             }
         } else {
-            let muted = engine.part_view(self.part).muted;
+            let muted = engine.part_muted(self.part);
             engine.set_part_mute(self.part, !muted);
         }
     }
@@ -365,32 +399,46 @@ impl FrontPanel {
             Dir::Right => v + 1,
         };
         if self.all {
+            // ALL turns the setting for every part at once, stepping
+            // from wherever the shown part stands.
+            let base = self.part;
             match pair {
-                // The manual's ALL assignments: LEVEL is the master
-                // volume, PAN and KEY SHIFT their master values, the
-                // effect pairs the return levels, and MIDI CH -- the
-                // device ID.
                 Pair::Level => {
-                    let v = (engine.master_volume_cc() as i32 + step(0)).clamp(0, 127);
-                    engine.set_master_volume_cc(v as u8);
+                    let v = (engine.part_setting(base, PartSetting::Level) + step(0)).clamp(0, 127);
+                    for p in 0..PARTS {
+                        engine.set_part_level(p, v as u8);
+                    }
                 }
                 Pair::Pan => {
-                    let v = (engine.master_pan() as i32 + step(0)).clamp(1, 127);
-                    engine.set_master_pan(v as u8);
+                    let v = (engine.part_setting(base, PartSetting::Pan).max(1) + step(0))
+                        .clamp(1, 127);
+                    for p in 0..PARTS {
+                        engine.set_part_pan(p, v as u8);
+                    }
                 }
                 Pair::Reverb => {
-                    let v = (engine.master_reverb() as i32 + step(0)).clamp(0, 127);
-                    engine.set_master_reverb(v as u8);
+                    let v =
+                        (engine.part_setting(base, PartSetting::Reverb) + step(0)).clamp(0, 127);
+                    for p in 0..PARTS {
+                        engine.set_part_reverb(p, v as u8);
+                    }
                 }
                 Pair::Chorus => {
-                    let v = (engine.master_chorus() as i32 + step(0)).clamp(0, 127);
-                    engine.set_master_chorus(v as u8);
+                    let v =
+                        (engine.part_setting(base, PartSetting::Chorus) + step(0)).clamp(0, 127);
+                    for p in 0..PARTS {
+                        engine.set_part_chorus(p, v as u8);
+                    }
                 }
                 Pair::KeyShift => {
-                    let v = (engine.master_key_shift() as i32 + step(0)).clamp(-24, 24);
-                    engine.set_master_key_shift(v as i8);
+                    let v =
+                        (engine.part_setting(base, PartSetting::KeyShift) + step(0)).clamp(-24, 24);
+                    for p in 0..PARTS {
+                        engine.set_part_key_shift(p, v as i8);
+                    }
                 }
                 Pair::MidiCh => {
+                    // The one master left on this pair: the device ID.
                     let v = (engine.device_id() as i32 + step(0)).clamp(1, 32);
                     engine.set_device_id(v as u8);
                 }
@@ -455,20 +503,11 @@ impl FrontPanel {
         }
     }
 
-    fn run_init(&mut self, engine: &mut GmEngine, init: Init) -> Option<PanelRequest> {
-        match init {
-            Init::Gs => {
-                engine.init_gs();
-                None
-            }
-            Init::Mt32 => {
-                engine.init_mt32();
-                None
-            }
-            // Factory settings live in the host's configuration, so the
-            // full reset is a power cycle.
-            Init::All => Some(PanelRequest::Recycle),
-        }
+    fn notice(&mut self, text: &str) {
+        self.message = Some(Message::Notice {
+            text: text.to_string(),
+            started: None,
+        });
     }
 
     // --- the glass -------------------------------------------------------
@@ -476,19 +515,30 @@ impl FrontPanel {
     fn home_screen(&self, engine: &GmEngine, bars: [u16; PARTS]) -> Screen {
         let monitoring = engine.monitor() != Monitor::Off;
         if self.all {
+            // Each value reads across all sixteen parts: the value when
+            // they agree, and a shrug when they do not.
+            let uniform = |setting: PartSetting| -> Option<i32> {
+                let first = engine.part_setting(0, setting);
+                (1..PARTS)
+                    .all(|p| engine.part_setting(p, setting) == first)
+                    .then_some(first)
+            };
+            let show = |setting: PartSetting, label: fn(i32) -> String| {
+                uniform(setting).map(label).unwrap_or_else(|| "---".into())
+            };
             return Screen {
                 part: "ALL".to_string(),
                 instrument: String::new(),
                 name: "- Coppersynth -".to_string(),
-                level: engine.master_volume_cc().to_string(),
-                pan: pan_label(engine.master_pan()),
-                reverb: engine.master_reverb().to_string(),
-                chorus: engine.master_chorus().to_string(),
-                key_shift: shift_label(engine.master_key_shift()),
+                level: show(PartSetting::Level, |v| v.to_string()),
+                pan: show(PartSetting::Pan, |v| pan_label(v as u8)),
+                reverb: show(PartSetting::Reverb, |v| v.to_string()),
+                chorus: show(PartSetting::Chorus, |v| v.to_string()),
+                key_shift: show(PartSetting::KeyShift, |v| shift_label(v as i8)),
                 midi_ch: engine.device_id().to_string(),
                 bars,
                 all_led: true,
-                mute_led: (0..PARTS).all(|p| engine.part_view(p).muted),
+                mute_led: (0..PARTS).all(|p| engine.part_muted(p)),
                 translating: engine.translating(),
             };
         }
@@ -514,9 +564,6 @@ impl FrontPanel {
             },
             bars,
             all_led: false,
-            // Lit while a muted part is selected; blinking is the
-            // host's affair through `mute_led` over time -- the panel
-            // keeps it steady and monitor state readable.
             mute_led: view.muted || monitoring,
             translating: engine.translating(),
         }
@@ -557,12 +604,14 @@ impl FrontPanel {
                     held_at: now_ms,
                 };
             } else if now_ms.saturating_sub(peak.held_at) > PEAK_HOLD_MS {
-                peak.row = peak.row.saturating_sub(1);
-                peak.held_at = now_ms;
+                // Held its moment; now it falls a row at a time until
+                // it lands.
+                peak.row = peak.row.saturating_sub(1).max(rows);
+                peak.held_at = now_ms.saturating_sub(PEAK_HOLD_MS.saturating_sub(PEAK_FALL_MS));
             }
             // The baseline dot is the part being there at all; muting
             // switches it off, which is how the unit marks a mute.
-            if !engine.part_view(p).muted {
+            if !engine.part_muted(p) {
                 bars[p] |= 1;
             }
             if rows > 0 {
@@ -576,19 +625,24 @@ impl FrontPanel {
     }
 
     /// A pair held together shows its values across the parts -- the
-    /// manual's staircase.
+    /// staircase.
     fn value_bars(&self, engine: &GmEngine, pair: Pair) -> [u16; PARTS] {
         let mut bars = [0u16; PARTS];
         for (p, bar) in bars.iter_mut().enumerate() {
-            let view = engine.part_view(p);
             let height = match pair {
-                Pair::Level => scaled(view.level as u32, 127),
-                Pair::Pan => scaled(view.pan.max(1) as u32 - 1, 126),
-                Pair::Reverb => scaled(view.reverb as u32, 127),
-                Pair::Chorus => scaled(view.chorus as u32, 127),
-                Pair::KeyShift => scaled((view.key_shift + 24) as u32, 48),
-                Pair::Instrument => scaled(view.instrument as u32, 127),
-                Pair::MidiCh => match view.rx_channel {
+                Pair::Level => scaled(engine.part_setting(p, PartSetting::Level) as u32, 127),
+                Pair::Pan => scaled(
+                    (engine.part_setting(p, PartSetting::Pan).max(1) - 1) as u32,
+                    126,
+                ),
+                Pair::Reverb => scaled(engine.part_setting(p, PartSetting::Reverb) as u32, 127),
+                Pair::Chorus => scaled(engine.part_setting(p, PartSetting::Chorus) as u32, 127),
+                Pair::KeyShift => scaled(
+                    (engine.part_setting(p, PartSetting::KeyShift) + 24) as u32,
+                    48,
+                ),
+                Pair::Instrument => scaled(engine.part_view(p).instrument as u32, 127),
+                Pair::MidiCh => match engine.part_view(p).rx_channel {
                     Some(c) => c as u32 + 1,
                     None => 0,
                 },
@@ -601,35 +655,40 @@ impl FrontPanel {
         bars
     }
 
-    /// The visible slice of the letter, scrolled if it is long, or
-    /// `None` once it has run its course.
-    fn letter_window(&mut self, now_ms: u64) -> Option<String> {
-        let message = self.message.as_mut()?;
-        let started = *message.started.get_or_insert(now_ms);
-        let elapsed = now_ms.saturating_sub(started);
-        let len = message.text.len();
-        if len <= NAME_COLS {
-            if elapsed >= LETTER_HOLD_MS {
-                self.message = None;
-                return None;
+    /// The visible slice of whatever message is up, if one is.
+    fn message_line(&mut self, now_ms: u64) -> Option<String> {
+        match self.message.as_mut()? {
+            Message::Notice { text, started } => {
+                let since = *started.get_or_insert(now_ms);
+                if now_ms.saturating_sub(since) >= NOTICE_MS {
+                    self.message = None;
+                    return None;
+                }
+                Some(text.clone())
             }
-            return Some(message.text.iter().collect());
+            Message::Letter { text, started } => {
+                let since = *started.get_or_insert(now_ms);
+                let len = text.len();
+                if len <= NAME_COLS {
+                    return Some(text.iter().collect());
+                }
+                // Round and round: rest at the head, step through,
+                // rest on the tail, and begin again.
+                let steps = (len - NAME_COLS) as u64;
+                let cycle = SCROLL_START_MS + steps * SCROLL_STEP_MS + SCROLL_TAIL_MS;
+                let at = now_ms.saturating_sub(since) % cycle;
+                let offset = if at < SCROLL_START_MS {
+                    0
+                } else {
+                    ((at - SCROLL_START_MS) / SCROLL_STEP_MS).min(steps)
+                };
+                Some(
+                    text[offset as usize..offset as usize + NAME_COLS]
+                        .iter()
+                        .collect(),
+                )
+            }
         }
-        let steps = (len - NAME_COLS) as u64;
-        let offset = if elapsed < SCROLL_START_MS {
-            0
-        } else {
-            ((elapsed - SCROLL_START_MS) / SCROLL_STEP_MS).min(steps)
-        };
-        if offset == steps && elapsed > SCROLL_START_MS + steps * SCROLL_STEP_MS + SCROLL_TAIL_MS {
-            self.message = None;
-            return None;
-        }
-        Some(
-            message.text[offset as usize..offset as usize + NAME_COLS]
-                .iter()
-                .collect(),
-        )
     }
 }
 
