@@ -128,10 +128,9 @@ pub struct GmEngine {
     synth: Synthesizer,
     translator: Mt32Translator,
     parts: Parts,
-    /// The programs the soundfont actually carries, sorted, for the
-    /// melodic banks and the drum bank: what the panel cycles through
-    /// on a sparse font.
-    melodic_programs: Vec<u8>,
+    /// The drum kits the soundfont actually carries, sorted: the panel
+    /// steps these as a list, unlike melodic programs, whose numbers
+    /// must never shift.
     drum_programs: Vec<u8>,
     /// Scratch for the split-channel render, kept so a running mixer
     /// never allocates.
@@ -196,14 +195,6 @@ impl GmEngine {
     ) -> Result<Self, String> {
         let settings = SynthesizerSettings::new(sample_rate as i32);
         let synth = Synthesizer::new(&font, &settings).map_err(|e| e.to_string())?;
-        let mut melodic_programs: Vec<u8> = font
-            .get_presets()
-            .iter()
-            .filter(|p| p.get_bank_number() == 0)
-            .map(|p| p.get_patch_number() as u8)
-            .collect();
-        melodic_programs.sort_unstable();
-        melodic_programs.dedup();
         let mut drum_programs: Vec<u8> = font
             .get_presets()
             .iter()
@@ -216,7 +207,6 @@ impl GmEngine {
             synth,
             translator: Mt32Translator::new(mode),
             parts: Parts::new(),
-            melodic_programs,
             drum_programs,
             scratch_left: Vec::new(),
             scratch_right: Vec::new(),
@@ -424,45 +414,27 @@ impl GmEngine {
         }
     }
 
-    /// What the soundfont calls the preset on `bank`/`patch`, falling
-    /// back exactly as playback does -- a melodic miss to the GM set,
-    /// a drum miss to the standard kit, and finally to the font's
-    /// lowest preset -- so the name on the glass is the sound heard.
+    /// What the soundfont calls the preset on `bank`/`patch`, or
+    /// "Empty" for a slot the font never filled: the numbering never
+    /// shifts, the hole is simply named. (Playback still falls back to
+    /// the font's default sound -- a synth must play something.)
     fn preset_name(&self, bank: i32, patch: i32) -> String {
-        let presets = self.synth.get_sound_font().get_presets();
-        let find = |bank: i32, patch: i32| {
-            presets
-                .iter()
-                .find(|p| p.get_bank_number() == bank && p.get_patch_number() == patch)
-                .map(|p| p.get_name().trim().to_string())
-        };
-        find(bank, patch)
-            .or_else(|| {
-                if bank < 128 {
-                    find(0, patch)
-                } else {
-                    find(128, 0)
-                }
-            })
-            .or_else(|| {
-                presets
-                    .iter()
-                    .min_by_key(|p| (p.get_bank_number() << 16) | p.get_patch_number())
-                    .map(|p| p.get_name().trim().to_string())
-            })
-            .unwrap_or_default()
+        self.synth
+            .get_sound_font()
+            .get_presets()
+            .iter()
+            .find(|p| p.get_bank_number() == bank && p.get_patch_number() == patch)
+            .map(|p| p.get_name().trim().to_string())
+            .unwrap_or_else(|| "Empty".to_string())
     }
 
-    /// The next instrument the panel's arrows land on: the neighbour in
-    /// the soundfont's own program list, so a sparse font skips the
-    /// numbers it never loaded. `None` when the font offers nothing for
-    /// the part's bank.
+    /// The next drum kit the panel's arrows land on: the neighbour in
+    /// the soundfont's own kit list. Kits are a list by nature; melodic
+    /// programs are numbered slots and step plainly so their numbers
+    /// stay put. `None` when the font carries no kits at all.
     pub fn neighbour_instrument(&self, part: usize, step: i32) -> Option<u8> {
-        let list = if part == DRUM_PART {
-            &self.drum_programs
-        } else {
-            &self.melodic_programs
-        };
+        let _ = part;
+        let list = &self.drum_programs;
         if list.is_empty() {
             return None;
         }
@@ -521,6 +493,12 @@ impl GmEngine {
             .get_info()
             .get_bank_name()
             .trim()
+    }
+
+    /// How many regions the load mended and dropped putting a bruised
+    /// bank right, for the host's log.
+    pub fn bank_repairs(&self) -> (usize, usize) {
+        self.synth.get_sound_font().get_repairs()
     }
 
     /// Switch MT-32 mode at runtime -- the panel's own switch. The

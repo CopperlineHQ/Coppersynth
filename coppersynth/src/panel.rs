@@ -454,12 +454,14 @@ impl FrontPanel {
                 }
             }
             Pair::Instrument => {
-                // The neighbour in the soundfont's own program list --
-                // a sparse font skips what it never loaded, and a drum
-                // part steps its kits.
-                let next = engine
-                    .neighbour_instrument(part, step(0))
-                    .unwrap_or_else(|| (view.instrument as i32 + step(0)).rem_euclid(128) as u8);
+                let next = if view.drums {
+                    // Kits are a list, and the list is the font's.
+                    engine.neighbour_instrument(part, step(0)).unwrap_or(0)
+                } else {
+                    // Melodic numbers never shift: a hole in a sparse
+                    // font stays a numbered slot, shown as Empty.
+                    (view.instrument as i32 + step(0)).rem_euclid(128) as u8
+                };
                 engine.set_part_instrument(part, next);
             }
             Pair::Level => {

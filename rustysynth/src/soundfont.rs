@@ -5,6 +5,7 @@ use std::io::Read;
 use crate::binary_reader::BinaryReader;
 use crate::error::SoundFontError;
 use crate::four_cc::FourCC;
+use crate::generator_type::GeneratorType;
 use crate::instrument::Instrument;
 use crate::preset::Preset;
 use crate::sample_header::SampleHeader;
@@ -23,6 +24,8 @@ pub struct SoundFont {
     pub(crate) sample_headers: Vec<SampleHeader>,
     pub(crate) presets: Vec<Preset>,
     pub(crate) instruments: Vec<Instrument>,
+    repaired_regions: usize,
+    dropped_regions: usize,
 }
 
 impl SoundFont {
@@ -51,46 +54,74 @@ impl SoundFont {
         let sample_data = SoundFontSampleData::new(reader)?;
         let parameters = SoundFontParameters::new(reader)?;
 
-        let sound_font = Self {
+        let mut sound_font = Self {
             info,
             bits_per_sample: sample_data.bits_per_sample,
             wave_data: sample_data.wave_data,
             sample_headers: parameters.sample_headers,
             presets: parameters.presets,
             instruments: parameters.instruments,
+            repaired_regions: 0,
+            dropped_regions: 0,
         };
 
-        sound_font.sanity_check()?;
+        sound_font.repair();
 
         Ok(sound_font)
     }
 
-    fn sanity_check(&self) -> Result<(), SoundFontError> {
-        // https://github.com/sinshu/rustysynth/issues/22
-        // https://github.com/sinshu/rustysynth/issues/33
-        // https://github.com/sinshu/rustysynth/pull/51
-        for instrument in &self.instruments {
-            for region in &instrument.regions {
+    /// Broken banks are the rule out in the world: rips carry regions
+    /// with loop points past the data or inside out, and the checks that
+    /// once rejected the whole font for one bad zone (issues #22/#33,
+    /// PR #51 upstream) threw working instruments away with it. Instead:
+    /// a region whose loop alone is broken plays through unlooped, a
+    /// region whose sample bounds are nonsense is dropped, and the rest
+    /// of the font stands.
+    fn repair(&mut self) {
+        let len = self.wave_data.len();
+        let mut repaired = 0usize;
+        let mut dropped = 0usize;
+        for instrument in &mut self.instruments {
+            instrument.regions.retain_mut(|region| {
                 let start = region.get_sample_start();
                 let end = region.get_sample_end();
+                if start < 0 || end as usize >= len || end <= start {
+                    dropped += 1;
+                    return false;
+                }
                 let start_loop = region.get_sample_start_loop();
                 let end_loop = region.get_sample_end_loop();
-                let loop_mode = region.get_sample_modes();
-
-                if start < 0
-                    || start_loop < 0
-                    || end as usize >= self.wave_data.len()
-                    || end_loop as usize >= self.wave_data.len()
-                    || end <= start
+                let looped = region.get_sample_modes() != LoopMode::NoLoop;
+                let loop_broken = start_loop < 0
+                    || end_loop as usize >= len
                     || end_loop < start_loop
-                    || (loop_mode != LoopMode::NoLoop && start_loop >= end_loop)
-                {
-                    return Err(SoundFontError::SanityCheckFailed);
+                    || (looped && start_loop >= end_loop);
+                if loop_broken {
+                    // The sample itself checked out, so keep it and
+                    // defuse the loop: no loop mode, offsets cleared,
+                    // and the loop points pinned inside the sample so
+                    // nothing downstream can index past the data.
+                    region.gs[GeneratorType::SAMPLE_MODES as usize] = 0;
+                    region.gs[GeneratorType::START_LOOP_ADDRESS_OFFSET as usize] = 0;
+                    region.gs[GeneratorType::END_LOOP_ADDRESS_OFFSET as usize] = 0;
+                    region.gs[GeneratorType::START_LOOP_ADDRESS_COARSE_OFFSET as usize] = 0;
+                    region.gs[GeneratorType::END_LOOP_ADDRESS_COARSE_OFFSET as usize] = 0;
+                    region.sample_start_loop = region.sample_start;
+                    region.sample_end_loop = region.sample_end;
+                    repaired += 1;
                 }
-            }
+                true
+            });
         }
+        self.repaired_regions = repaired;
+        self.dropped_regions = dropped;
+    }
 
-        Ok(())
+    /// How many regions the load had to mend (loops defused) and how
+    /// many it had to drop (sample bounds beyond saving), so a host can
+    /// tell the user their bank arrived bruised.
+    pub fn get_repairs(&self) -> (usize, usize) {
+        (self.repaired_regions, self.dropped_regions)
     }
 
     /// Gets the information of the SoundFont.
