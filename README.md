@@ -39,7 +39,11 @@ cargo build --release
 cargo test --release
 ```
 
-The first build downloads the soundfont (about 32 MB) into `assets/`;
+The build script uses `curl` to fetch the soundfont and `git` to stamp
+the release date; both ship with stock Windows 10+, macOS and Linux,
+and a build without them still builds (without the bundled bank, and
+with an undated splash). The first build downloads the soundfont
+(about 32 MB) into `assets/`;
 `tools/fetch-assets.sh` also fetches the GeneralUser demo MIDIs for the
 listening rig (`cargo run --bin ab-render`), which renders A/B pairs
 against FluidSynth output for by-ear regression checks. The

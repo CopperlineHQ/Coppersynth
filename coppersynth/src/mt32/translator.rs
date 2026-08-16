@@ -41,7 +41,7 @@ pub enum Event {
         data1: u8,
         data2: u8,
     },
-    /// Text a game wrote to the MT-32's display, for the OSD.
+    /// Text a game wrote to a display region, for the host's panel.
     Display(String),
     /// Universal sysex master volume, 0..=127.
     MasterVolume(u8),

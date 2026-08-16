@@ -99,7 +99,7 @@ fn instrument_arrows_step_programs_and_kits() {
     assert_eq!(screen.part, "10");
     assert!(screen.name.starts_with('*'), "a drum set wears the star");
     // The arrow lands on the next kit the font actually carries.
-    let next = e.neighbour_instrument(DRUM_PART, 1).expect("kits exist");
+    let next = e.neighbour_kit(1).expect("kits exist");
     assert_ne!(next, 0, "the font carries more than one kit");
     panel.button(&mut e, Button::Arrow(Pair::Instrument, Dir::Right));
     assert_eq!(e.part_view(DRUM_PART).instrument, next);
@@ -117,7 +117,7 @@ fn cycling_walks_the_fonts_own_list() {
     let mut seen = vec![start];
     let mut at = start;
     for _ in 0..129 {
-        at = e.neighbour_instrument(DRUM_PART, 1).expect("kits exist");
+        at = e.neighbour_kit(1).expect("kits exist");
         e.set_part_instrument(DRUM_PART, at);
         if at == start {
             break;
