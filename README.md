@@ -4,7 +4,7 @@ A General MIDI sound module in safe Rust, with the habits of a Roland
 Sound Canvas: a sixteen-part SoundFont synthesizer, an MT-32 translation
 layer in front, and an SC-55-shaped front panel model behind it. MIDI
 goes in as bytes, stereo samples come out, and a Sierra-era game that
-uploads sysex meant for an MT-32 "just works" with no ROMs at all.
+uploads sysex meant for an MT-32 "just works" with no "ROMs" at all.
 
 <img width="1238" height="156" alt="Screenshot 2026-08-16 at 22 25 00" src="https://github.com/user-attachments/assets/1063f983-27d9-4971-8dcf-735e26ef8d00" />
 
