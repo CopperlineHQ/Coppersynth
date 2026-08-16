@@ -65,6 +65,9 @@ layer and reports what an MT-32 would have understood.
 - The Roland SC-55 owner's manual, as the behavioural reference for the
   front panel, and the MT-32 owner's manual for the translation layer's
   memory map.
+- The demo songs: "Railgun Rain" by Ivan Stanton (northivanastan),
+  public domain; "Title Screen", artist unknown, under a licence
+  asking no credit.
 - ScummVM's MT-32-to-GM driver and wildmidi, cross-referenced (with
   Sierra's own patch data) when the translation tables were assembled;
   the tables here were built independently from that comparison.

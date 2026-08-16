@@ -11,7 +11,7 @@
 //! display types, bulk dumps, Micro Edit) is not modelled; the panel is
 //! for playing games at, not servicing.
 
-use crate::engine::{GmEngine, Monitor, Mt32Mode, PartSetting, PARTS};
+use crate::engine::{GmEngine, Monitor, Mt32Mode, PartSetting, DEMO_SONGS, PARTS};
 
 /// One side of a left/right pair.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,6 +104,12 @@ enum Mode {
     ConfirmMt32,
     /// The undocumented screen. Any press leaves it.
     Version,
+    /// The unit playing to itself: ALL plays, MUTE stops, PART picks
+    /// the song. Reached with both PART halves held through power-on.
+    Demo {
+        song: usize,
+        playing: bool,
+    },
 }
 
 /// A message on the name line.
@@ -135,6 +141,8 @@ const SCROLL_TAIL_MS: u64 = 1500;
 const PICTURE_MS: u64 = 3000;
 /// The prompt's lamps flash about once a second.
 const FLASH_MS: u64 = 500;
+/// The rest between demo songs.
+const DEMO_GAP_MS: u64 = 3000;
 /// The text area's width in characters -- a full SF2 preset name,
 /// which the spec caps at twenty.
 pub const NAME_COLS: usize = 20;
@@ -165,6 +173,8 @@ pub struct FrontPanel {
     boot_done: bool,
     message: Option<Message>,
     picture: Option<([u16; PARTS], Option<u64>)>,
+    /// When the playing demo song ran out, while the gap rests.
+    demo_ended: Option<u64>,
     /// The matrix as displayed: live level with a fall, and a peak dot.
     shown: [f32; PARTS],
     peaks: [PeakDot; PARTS],
@@ -182,6 +192,7 @@ impl Default for FrontPanel {
             boot_done: false,
             message: None,
             picture: None,
+            demo_ended: None,
             shown: [0.0; PARTS],
             peaks: [PeakDot::default(); PARTS],
             last_tick: None,
@@ -197,7 +208,16 @@ impl FrontPanel {
     pub fn power_on_held(&mut self, held: &[Button]) {
         let is =
             |want: &[Button]| held.len() == want.len() && want.iter().all(|b| held.contains(b));
-        if is(&[Button::Arrow(Pair::Instrument, Dir::Right)]) {
+        if is(&[Button::Both(Pair::Part)]) {
+            // Both PART halves: demo mode, armed on song one and
+            // waiting for ALL, MUTE lamp lit, exactly as the unit
+            // arrives in it.
+            self.mode = Mode::Demo {
+                song: 0,
+                playing: false,
+            };
+            self.boot_done = true;
+        } else if is(&[Button::Arrow(Pair::Instrument, Dir::Right)]) {
             // A unit switched on into a service screen skips its boot
             // line; the question is the greeting.
             self.mode = Mode::ConfirmMt32;
@@ -239,6 +259,43 @@ impl FrontPanel {
                 }
                 _ => None,
             };
+        }
+        // The demo transport: ALL plays from the top, MUTE stops, the
+        // PART arrows pick the song -- switching mid-song plays on.
+        if let Mode::Demo { song, playing } = self.mode {
+            match b {
+                Button::All => {
+                    engine.demo_play(song);
+                    self.mode = Mode::Demo {
+                        song,
+                        playing: true,
+                    };
+                    self.demo_ended = None;
+                }
+                Button::Mute => {
+                    engine.demo_stop();
+                    self.mode = Mode::Demo {
+                        song,
+                        playing: false,
+                    };
+                    self.demo_ended = None;
+                }
+                Button::Arrow(Pair::Part, dir) => {
+                    let count = DEMO_SONGS.len() as i32;
+                    let step = match dir {
+                        Dir::Left => -1,
+                        Dir::Right => 1,
+                    };
+                    let song = (song as i32 + step).rem_euclid(count) as usize;
+                    if playing {
+                        engine.demo_play(song);
+                    }
+                    self.mode = Mode::Demo { song, playing };
+                    self.demo_ended = None;
+                }
+                _ => {}
+            }
+            return None;
         }
         // A game's letter stays until a button sends it away; that
         // press is spent on the dismissal.
@@ -290,7 +347,7 @@ impl FrontPanel {
     }
 
     /// Compose the glass.
-    pub fn screen(&mut self, engine: &GmEngine, now_ms: u64) -> Screen {
+    pub fn screen(&mut self, engine: &mut GmEngine, now_ms: u64) -> Screen {
         let bars = self.compose_bars(engine, now_ms);
         let mut screen = self.home_screen(engine, bars);
         if let Some((line, subtitle)) = self.boot_line(engine, now_ms) {
@@ -298,7 +355,9 @@ impl FrontPanel {
             screen.instrument = String::new();
             screen.name = line;
             screen.subtitle = subtitle;
-            return screen;
+            // Nothing behind the boot line has a value to show.
+            dash_values(&mut screen);
+            return finished(screen);
         }
         match self.mode {
             Mode::Version => {
@@ -316,6 +375,31 @@ impl FrontPanel {
                 screen.all_led = flash_on;
                 screen.mute_led = flash_on;
             }
+            Mode::Demo { song, playing } => {
+                // A finished song rests, then the chain moves on -- or
+                // with one song, round it comes again.
+                if playing && engine.demo_finished() {
+                    let since = *self.demo_ended.get_or_insert(now_ms);
+                    if now_ms.saturating_sub(since) >= DEMO_GAP_MS {
+                        let song = (song + 1) % DEMO_SONGS.len();
+                        engine.demo_play(song);
+                        self.mode = Mode::Demo {
+                            song,
+                            playing: true,
+                        };
+                        self.demo_ended = None;
+                    }
+                }
+                let Mode::Demo { song, playing } = self.mode else {
+                    unreachable!()
+                };
+                screen.part = format!("S-{}", song + 1);
+                screen.instrument = String::new();
+                screen.name = DEMO_SONGS[song].chars().take(NAME_COLS).collect();
+                dash_values(&mut screen);
+                screen.all_led = playing;
+                screen.mute_led = !playing;
+            }
             Mode::Home | Mode::View(_) => {
                 if let Some(text) = self.message_line(now_ms) {
                     screen.part = String::new();
@@ -324,7 +408,7 @@ impl FrontPanel {
                 }
             }
         }
-        screen
+        finished(screen)
     }
 
     /// The boot line while it runs -- the greeting (wearing the version
@@ -703,6 +787,34 @@ impl FrontPanel {
             }
         }
     }
+}
+
+/// A dash in every segment: what a value field shows when there is no
+/// value to show.
+fn dash_values(screen: &mut Screen) {
+    for field in [
+        &mut screen.level,
+        &mut screen.pan,
+        &mut screen.reverb,
+        &mut screen.chorus,
+        &mut screen.key_shift,
+        &mut screen.midi_ch,
+    ] {
+        *field = "---".to_string();
+    }
+}
+
+/// The last word on any screen: a blank part or instrument slot on a
+/// powered unit reads as dashes too, like every other empty segment.
+/// (Demo mode's `S-1` and the home screen's numbers pass untouched.)
+fn finished(mut screen: Screen) -> Screen {
+    if screen.part.is_empty() {
+        screen.part = "---".to_string();
+    }
+    if screen.instrument.is_empty() {
+        screen.instrument = "---".to_string();
+    }
+    screen
 }
 
 /// Bar height 1..=16 for a value against its full scale.

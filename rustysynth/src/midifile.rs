@@ -74,6 +74,25 @@ impl Message {
     }
 }
 
+impl MidiFile {
+    /// The file's channel events as `(seconds, status, data1, data2)`,
+    /// tempo already resolved into the times: everything a host needs
+    /// to pump a song through a synthesizer at its own pace.
+    pub fn events(&self) -> impl Iterator<Item = (f64, u8, u8, u8)> + '_ {
+        self.messages
+            .iter()
+            .zip(self.times.iter())
+            .filter_map(|(message, &time)| match message {
+                Message::Normal {
+                    status,
+                    data1,
+                    data2,
+                } => Some((time, *status, *data1, *data2)),
+                _ => None,
+            })
+    }
+}
+
 /// Represents a standard MIDI file.
 #[derive(Debug)]
 #[non_exhaustive]
