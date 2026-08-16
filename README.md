@@ -21,10 +21,10 @@ and it may stand alone one day. A sibling of
 ## Use
 
 ```rust
-use coppersynth::engine::GmEngine;
+use coppersynth::engine::Engine;
 use coppersynth::mt32::translator::Mt32Mode;
 
-let mut engine = GmEngine::open_bundled(44_100, Mt32Mode::Auto)
+let mut engine = Engine::open_bundled(44_100, Mt32Mode::Auto)
     .expect("the bundled bank");
 
 // Raw bytes, straight off the wire: running status, SysEx and all.
@@ -81,7 +81,7 @@ the complete General MIDI sound set including the SFX bank and drum
 kits at a very reasonable size. It is fetched from its repository at
 build time, zipped and embedded, licence text alongside. Any other
 `.sf2` (or a `.zip` holding one) loads at runtime through
-`GmEngine::open`.
+`Engine::open`.
 
 ## Credits
 

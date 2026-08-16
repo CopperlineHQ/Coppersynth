@@ -11,7 +11,7 @@
 //! display types, bulk dumps, Micro Edit) is not modelled; the panel is
 //! for playing games at, not servicing.
 
-use crate::engine::{GmEngine, Monitor, Mt32Mode, PartSetting, DEMO_SONGS, PARTS};
+use crate::engine::{Engine, Monitor, Mt32Mode, PartSetting, DEMO_SONGS, PARTS};
 
 /// One side of a left/right pair.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -235,7 +235,7 @@ impl FrontPanel {
 
     /// A press. Anything the panel cannot mirror alone comes back as a
     /// request for the host.
-    pub fn button(&mut self, engine: &mut GmEngine, b: Button) -> Option<PanelRequest> {
+    pub fn button(&mut self, engine: &mut Engine, b: Button) -> Option<PanelRequest> {
         // The version screen leaves on any press, saying nothing.
         if self.mode == Mode::Version {
             self.mode = Mode::Home;
@@ -315,7 +315,7 @@ impl FrontPanel {
 
     /// The VOLUME knob, 0 at the bottom of its travel to 1 at the top.
     /// A pot after the DAC, exactly as on the unit.
-    pub fn volume(&mut self, engine: &mut GmEngine, value: f32) {
+    pub fn volume(&mut self, engine: &mut Engine, value: f32) {
         engine.set_output_gain(value);
     }
 
@@ -347,7 +347,7 @@ impl FrontPanel {
     }
 
     /// Compose the glass.
-    pub fn screen(&mut self, engine: &mut GmEngine, now_ms: u64) -> Screen {
+    pub fn screen(&mut self, engine: &mut Engine, now_ms: u64) -> Screen {
         let bars = self.compose_bars(engine, now_ms);
         let mut screen = self.home_screen(engine, bars);
         if let Some((line, subtitle)) = self.boot_line(engine, now_ms) {
@@ -414,7 +414,7 @@ impl FrontPanel {
     /// The boot line while it runs -- the greeting (wearing the version
     /// and date under it when the splash was asked for), then the
     /// soundfont's own name.
-    fn boot_line(&mut self, engine: &GmEngine, now_ms: u64) -> Option<(String, String)> {
+    fn boot_line(&mut self, engine: &Engine, now_ms: u64) -> Option<(String, String)> {
         if self.boot_done {
             return None;
         }
@@ -451,7 +451,7 @@ impl FrontPanel {
 
     // --- buttons ---------------------------------------------------------
 
-    fn press_mute(&mut self, engine: &mut GmEngine) {
+    fn press_mute(&mut self, engine: &mut Engine) {
         if self.all {
             // Mute everything, or let everything go.
             let any_open = (0..PARTS).any(|p| !engine.part_muted(p));
@@ -464,7 +464,7 @@ impl FrontPanel {
         }
     }
 
-    fn press_monitor(&mut self, engine: &mut GmEngine) {
+    fn press_monitor(&mut self, engine: &mut Engine) {
         let want = if self.all {
             Monitor::All
         } else {
@@ -490,7 +490,7 @@ impl FrontPanel {
         };
     }
 
-    fn press_arrow(&mut self, engine: &mut GmEngine, pair: Pair, dir: Dir) {
+    fn press_arrow(&mut self, engine: &mut Engine, pair: Pair, dir: Dir) {
         let step = |v: i32| match dir {
             Dir::Left => v - 1,
             Dir::Right => v + 1,
@@ -606,7 +606,7 @@ impl FrontPanel {
 
     // --- the glass -------------------------------------------------------
 
-    fn home_screen(&self, engine: &GmEngine, bars: [u16; PARTS]) -> Screen {
+    fn home_screen(&self, engine: &Engine, bars: [u16; PARTS]) -> Screen {
         let monitoring = engine.monitor() != Monitor::Off;
         if self.all {
             // Each value reads across all sixteen parts: the value when
@@ -668,7 +668,7 @@ impl FrontPanel {
 
     /// The matrix: live levels with a fall and a peak dot, a parameter
     /// staircase while a pair view is up, or the picture a game sent.
-    fn compose_bars(&mut self, engine: &GmEngine, now_ms: u64) -> [u16; PARTS] {
+    fn compose_bars(&mut self, engine: &Engine, now_ms: u64) -> [u16; PARTS] {
         // A picture owns the matrix while it is fresh.
         if let Some((columns, started)) = &mut self.picture {
             let held = columns.to_owned();
@@ -723,7 +723,7 @@ impl FrontPanel {
 
     /// A pair held together shows its values across the parts -- the
     /// staircase.
-    fn value_bars(&self, engine: &GmEngine, pair: Pair) -> [u16; PARTS] {
+    fn value_bars(&self, engine: &Engine, pair: Pair) -> [u16; PARTS] {
         let mut bars = [0u16; PARTS];
         for (p, bar) in bars.iter_mut().enumerate() {
             let height = match pair {
