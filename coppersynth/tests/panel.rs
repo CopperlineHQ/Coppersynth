@@ -313,15 +313,23 @@ fn the_splash_egg_boots_verbose() {
     let mut panel = FrontPanel::default();
     panel.power_on_held(&[Button::Both(Pair::MidiCh), Button::Both(Pair::Instrument)]);
     let splash = panel.screen(&e, 0);
-    assert_eq!(
-        splash.name,
-        format!("Coppersynth {}", env!("CARGO_PKG_VERSION"))
-    );
+    let date = env!("COPPERSYNTH_RELEASE_DATE");
+    let expect = if date.is_empty() {
+        format!("v{}", env!("CARGO_PKG_VERSION"))
+    } else {
+        format!("v{} {date}", env!("CARGO_PKG_VERSION"))
+    };
+    assert_eq!(splash.name, "COPPERSYNTH");
+    assert_eq!(splash.subtitle, expect, "the version rides under it");
     assert_eq!(splash.part, "");
-    assert_eq!(panel.screen(&e, 2_000).name, "COPPERSYNTH");
+    // Three seconds of splash standing in for the greeting, then the
+    // bank introduces itself as on any boot.
+    assert_eq!(panel.screen(&e, 2_900).subtitle, expect);
     let bank: String = e.bank_name().chars().take(16).collect();
-    assert_eq!(panel.screen(&e, 3_500).name, bank);
-    assert_eq!(panel.screen(&e, 5_000).part, "01");
+    let after = panel.screen(&e, 3_200);
+    assert_eq!(after.name, bank);
+    assert_eq!(after.subtitle, "");
+    assert_eq!(panel.screen(&e, 4_700).part, "01");
 }
 
 /// A game's letter takes the line and stays until a button sends it

@@ -67,6 +67,9 @@ pub struct Screen {
     pub instrument: String,
     /// The name area: instrument name, message text, or a prompt.
     pub name: String,
+    /// A second, smaller line under the name; the boot splash's
+    /// version and date. Empty almost always.
+    pub subtitle: String,
     pub level: String,
     pub pan: String,
     pub reverb: String,
@@ -118,7 +121,7 @@ enum Message {
 
 /// The boot line: an optional version splash, the greeting, then the
 /// soundfont introducing itself by its own name.
-const SPLASH_MS: u64 = 1800;
+const SPLASH_MS: u64 = 3000;
 const GREETING_MS: u64 = 1500;
 const BANK_MS: u64 = 1500;
 /// How long a notice stays up.
@@ -289,10 +292,11 @@ impl FrontPanel {
     pub fn screen(&mut self, engine: &GmEngine, now_ms: u64) -> Screen {
         let bars = self.compose_bars(engine, now_ms);
         let mut screen = self.home_screen(engine, bars);
-        if let Some(boot_line) = self.boot_line(engine, now_ms) {
+        if let Some((line, subtitle)) = self.boot_line(engine, now_ms) {
             screen.part = String::new();
             screen.instrument = String::new();
-            screen.name = boot_line;
+            screen.name = line;
+            screen.subtitle = subtitle;
             return screen;
         }
         match self.mode {
@@ -322,9 +326,10 @@ impl FrontPanel {
         screen
     }
 
-    /// The boot line while it runs: version splash if asked for, the
-    /// greeting, then the soundfont's own name.
-    fn boot_line(&mut self, engine: &GmEngine, now_ms: u64) -> Option<String> {
+    /// The boot line while it runs -- the greeting (wearing the version
+    /// and date under it when the splash was asked for), then the
+    /// soundfont's own name.
+    fn boot_line(&mut self, engine: &GmEngine, now_ms: u64) -> Option<(String, String)> {
         if self.boot_done {
             return None;
         }
@@ -332,17 +337,27 @@ impl FrontPanel {
         let mut elapsed = now_ms.saturating_sub(started);
         if self.splash {
             if elapsed < SPLASH_MS {
-                return Some(format!("Coppersynth {}", env!("CARGO_PKG_VERSION")));
+                // The version, and the day its commit was made, stamped
+                // at build time.
+                let date = env!("COPPERSYNTH_RELEASE_DATE");
+                let line2 = if date.is_empty() {
+                    format!("v{}", env!("CARGO_PKG_VERSION"))
+                } else {
+                    format!("v{} {date}", env!("CARGO_PKG_VERSION"))
+                };
+                return Some(("COPPERSYNTH".to_string(), line2));
             }
             elapsed -= SPLASH_MS;
+        } else {
+            if elapsed < GREETING_MS {
+                return Some(("COPPERSYNTH".to_string(), String::new()));
+            }
+            elapsed -= GREETING_MS;
         }
-        if elapsed < GREETING_MS {
-            return Some("COPPERSYNTH".to_string());
-        }
-        if elapsed < GREETING_MS + BANK_MS {
+        if elapsed < BANK_MS {
             let bank: String = engine.bank_name().chars().take(NAME_COLS).collect();
             if !bank.is_empty() {
-                return Some(bank);
+                return Some((bank, String::new()));
             }
         }
         self.boot_done = true;
@@ -525,6 +540,7 @@ impl FrontPanel {
                 instrument: String::new(),
                 // The unit introduces the bank it is playing from.
                 name: engine.bank_name().chars().take(NAME_COLS).collect(),
+                subtitle: String::new(),
                 level: show(PartSetting::Level, |v| v.to_string()),
                 pan: show(PartSetting::Pan, |v| pan_label(v as u8)),
                 reverb: show(PartSetting::Reverb, |v| v.to_string()),
@@ -548,6 +564,7 @@ impl FrontPanel {
             part: format!("{:02}", self.part + 1),
             instrument: format!("{:03}", view.instrument as u16 + 1),
             name: name.chars().take(NAME_COLS).collect(),
+            subtitle: String::new(),
             level: view.level.to_string(),
             pan: pan_label(view.pan),
             reverb: view.reverb.to_string(),
