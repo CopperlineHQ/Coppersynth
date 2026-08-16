@@ -71,6 +71,13 @@ impl Modulator {
     /// identical when source, destination, amount-source and transform all
     /// match -- the amount is the value, not part of the identity. A file
     /// modulator identical to a default supersedes it.
+    /// The MIDI controller this modulator's primary source reads, if it
+    /// reads one: bit 7 of the source operator is the CC flag, the low
+    /// seven bits the controller number.
+    pub(crate) fn source_cc(&self) -> Option<u8> {
+        (self.source & 0x80 != 0).then_some((self.source & 0x7F) as u8)
+    }
+
     pub(crate) fn same_routing(&self, other: &Modulator) -> bool {
         self.source == other.source
             && self.destination == other.destination

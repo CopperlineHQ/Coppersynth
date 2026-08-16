@@ -50,6 +50,12 @@ pub struct Synthesizer {
 impl Synthesizer {
     /// The number of channels.
     pub const CHANNEL_COUNT: usize = 16;
+    /// The floor for effect feeds; see [`Synthesizer::write_block_above`].
+    const EFFECT_NON_AUDIBLE: f32 = 1.0e-5_f32;
+    /// The reverb return, calibrated so a full send is unmistakably a
+    /// hall: banks' CC91 modulators top out near 0.4 of the spec's send
+    /// range, and Freeverb's 0.015 input gain leaves that a whisper.
+    const REVERB_RETURN: f32 = 4.0_f32;
     /// The percussion channel.
     pub const PERCUSSION_CHANNEL: usize = 9;
 
@@ -408,22 +414,24 @@ impl Synthesizer {
             for voice in self.voices.get_active_voices().iter_mut() {
                 let previous_gain_left = voice.previous_chorus_send * voice.previous_mix_gain_left;
                 let current_gain_left = voice.current_chorus_send * voice.current_mix_gain_left;
-                Synthesizer::write_block(
+                Synthesizer::write_block_above(
                     previous_gain_left,
                     current_gain_left,
                     voice.block(),
                     chorus_input_left,
                     self.inverse_block_size,
+                    Synthesizer::EFFECT_NON_AUDIBLE,
                 );
                 let previous_gain_right =
                     voice.previous_chorus_send * voice.previous_mix_gain_right;
                 let current_gain_right = voice.current_chorus_send * voice.current_mix_gain_right;
-                Synthesizer::write_block(
+                Synthesizer::write_block_above(
                     previous_gain_right,
                     current_gain_right,
                     voice.block(),
                     chorus_input_right,
                     self.inverse_block_size,
+                    Synthesizer::EFFECT_NON_AUDIBLE,
                 );
             }
             chorus.process(
@@ -455,26 +463,21 @@ impl Synthesizer {
                 let current_gain = reverb.get_input_gain()
                     * voice.current_reverb_send
                     * (voice.current_mix_gain_left + voice.current_mix_gain_right);
-                Synthesizer::write_block(
+                Synthesizer::write_block_above(
                     previous_gain,
                     current_gain,
                     voice.block(),
                     &mut reverb_input[..],
                     self.inverse_block_size,
+                    Synthesizer::EFFECT_NON_AUDIBLE,
                 );
             }
 
             reverb.process(reverb_input, reverb_output_left, reverb_output_right);
-            ArrayMath::multiply_add(
-                self.master_volume * self.master_reverb_gain,
-                reverb_output_left,
-                &mut self.block_left[..],
-            );
-            ArrayMath::multiply_add(
-                self.master_volume * self.master_reverb_gain,
-                reverb_output_right,
-                &mut self.block_right[..],
-            );
+            let reverb_gain =
+                self.master_volume * self.master_reverb_gain * Synthesizer::REVERB_RETURN;
+            ArrayMath::multiply_add(reverb_gain, reverb_output_left, &mut self.block_left[..]);
+            ArrayMath::multiply_add(reverb_gain, reverb_output_right, &mut self.block_right[..]);
         }
     }
 
@@ -485,7 +488,29 @@ impl Synthesizer {
         destination: &mut [f32],
         inverse_block_size: f32,
     ) {
-        if SoundFontMath::max(previous_gain, current_gain) < SoundFontMath::NON_AUDIBLE {
+        Synthesizer::write_block_above(
+            previous_gain,
+            current_gain,
+            source,
+            destination,
+            inverse_block_size,
+            SoundFontMath::NON_AUDIBLE,
+        );
+    }
+
+    /// The audibility floor is the caller's: the dry mix skips anything
+    /// under `NON_AUDIBLE`, but an effect feed is pre-amplification --
+    /// the reverb's fixed input gain alone is 0.015, so a feed the dry
+    /// floor calls silent still rings the combs audibly.
+    fn write_block_above(
+        previous_gain: f32,
+        current_gain: f32,
+        source: &[f32],
+        destination: &mut [f32],
+        inverse_block_size: f32,
+        floor: f32,
+    ) {
+        if SoundFontMath::max(previous_gain, current_gain) < floor {
             return;
         }
 

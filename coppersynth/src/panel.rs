@@ -141,9 +141,6 @@ pub const BAR_ROWS: u32 = 16;
 const BAR_FALL_PER_MS: f32 = 0.006;
 const PEAK_HOLD_MS: u64 = 600;
 const PEAK_FALL_MS: u64 = 45;
-/// The ten drum sets, by program number, as the SC-55 lists them.
-const DRUM_SETS: [u8; 10] = [0, 8, 16, 24, 25, 32, 40, 48, 56, 127];
-
 #[derive(Debug, Clone, Copy, Default)]
 struct PeakDot {
     row: u32,
@@ -457,18 +454,13 @@ impl FrontPanel {
                 }
             }
             Pair::Instrument => {
-                if view.drums {
-                    // Drum parts step among the ten sets.
-                    let at = DRUM_SETS
-                        .iter()
-                        .position(|&s| s == view.instrument)
-                        .unwrap_or(0);
-                    let at = (at as i32 + step(0)).rem_euclid(DRUM_SETS.len() as i32);
-                    engine.set_part_instrument(part, DRUM_SETS[at as usize]);
-                } else {
-                    let v = (view.instrument as i32 + step(0)).rem_euclid(128);
-                    engine.set_part_instrument(part, v as u8);
-                }
+                // The neighbour in the soundfont's own program list --
+                // a sparse font skips what it never loaded, and a drum
+                // part steps its kits.
+                let next = engine
+                    .neighbour_instrument(part, step(0))
+                    .unwrap_or_else(|| (view.instrument as i32 + step(0)).rem_euclid(128) as u8);
+                engine.set_part_instrument(part, next);
             }
             Pair::Level => {
                 engine.set_part_level(part, (view.level as i32 + step(0)).clamp(0, 127) as u8);

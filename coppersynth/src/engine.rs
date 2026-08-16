@@ -128,6 +128,15 @@ pub struct GmEngine {
     synth: Synthesizer,
     translator: Mt32Translator,
     parts: Parts,
+    /// The programs the soundfont actually carries, sorted, for the
+    /// melodic banks and the drum bank: what the panel cycles through
+    /// on a sparse font.
+    melodic_programs: Vec<u8>,
+    drum_programs: Vec<u8>,
+    /// Scratch for the split-channel render, kept so a running mixer
+    /// never allocates.
+    scratch_left: Vec<f32>,
+    scratch_right: Vec<f32>,
     /// Display text from MT-32 or GS sysex, kept for the host.
     display: Vec<String>,
     /// Letters and pictures on their way to the front panel.
@@ -184,10 +193,30 @@ impl GmEngine {
     ) -> Result<Self, String> {
         let settings = SynthesizerSettings::new(sample_rate as i32);
         let synth = Synthesizer::new(&font, &settings).map_err(|e| e.to_string())?;
+        let mut melodic_programs: Vec<u8> = font
+            .get_presets()
+            .iter()
+            .filter(|p| p.get_bank_number() == 0)
+            .map(|p| p.get_patch_number() as u8)
+            .collect();
+        melodic_programs.sort_unstable();
+        melodic_programs.dedup();
+        let mut drum_programs: Vec<u8> = font
+            .get_presets()
+            .iter()
+            .filter(|p| p.get_bank_number() == 128)
+            .map(|p| p.get_patch_number() as u8)
+            .collect();
+        drum_programs.sort_unstable();
+        drum_programs.dedup();
         let mut engine = Self {
             synth,
             translator: Mt32Translator::new(mode),
             parts: Parts::new(),
+            melodic_programs,
+            drum_programs,
+            scratch_left: Vec::new(),
+            scratch_right: Vec::new(),
             display: Vec::new(),
             panel_feed: Vec::new(),
             sample_rate,
@@ -324,13 +353,13 @@ impl GmEngine {
 
     /// Render the next `frames.len()` stereo frames.
     pub fn render(&mut self, frames: &mut [(f32, f32)]) {
-        // The synthesizer wants split channels; a small scratch pair per
-        // call keeps the public surface simple and the block sizes are
-        // the host's business.
+        // The synthesizer wants split channels; the scratch pair grows
+        // to the largest block asked for and is never given back.
         let n = frames.len();
-        let mut left = vec![0f32; n];
-        let mut right = vec![0f32; n];
-        self.synth.render(&mut left, &mut right);
+        self.scratch_left.resize(n, 0.0);
+        self.scratch_right.resize(n, 0.0);
+        let (left, right) = (&mut self.scratch_left, &mut self.scratch_right);
+        self.synth.render(left, right);
         // The knob, then the master pan: a balance that leaves the
         // centre untouched and fades the far side out.
         let towards_right = (self.master_pan as f32 - 1.0) / 126.0;
@@ -372,7 +401,7 @@ impl GmEngine {
         PartView {
             instrument: (patch & 0x7F) as u8,
             name,
-            level: self.parts.level_cap[part.min(PARTS - 1)],
+            level: self.parts.level_cap.get(part).copied().unwrap_or(127),
             pan: cc(10),
             reverb: cc(91),
             chorus: cc(93),
@@ -384,9 +413,9 @@ impl GmEngine {
     }
 
     /// What the soundfont calls the preset on `bank`/`patch`, falling
-    /// back the way the synthesizer falls back: the drum part to bank
-    /// 128, anything unknown to the bank's patch 0, and failing that to
-    /// nothing at all.
+    /// back exactly as playback does -- a melodic miss to the GM set,
+    /// a drum miss to the standard kit, and finally to the font's
+    /// lowest preset -- so the name on the glass is the sound heard.
     fn preset_name(&self, bank: i32, patch: i32) -> String {
         let presets = self.synth.get_sound_font().get_presets();
         let find = |bank: i32, patch: i32| {
@@ -396,9 +425,51 @@ impl GmEngine {
                 .map(|p| p.get_name().trim().to_string())
         };
         find(bank, patch)
-            .or_else(|| find(bank, 0))
-            .or_else(|| find(0, patch))
+            .or_else(|| {
+                if bank < 128 {
+                    find(0, patch)
+                } else {
+                    find(128, 0)
+                }
+            })
+            .or_else(|| {
+                presets
+                    .iter()
+                    .min_by_key(|p| (p.get_bank_number() << 16) | p.get_patch_number())
+                    .map(|p| p.get_name().trim().to_string())
+            })
             .unwrap_or_default()
+    }
+
+    /// The next instrument the panel's arrows land on: the neighbour in
+    /// the soundfont's own program list, so a sparse font skips the
+    /// numbers it never loaded. `None` when the font offers nothing for
+    /// the part's bank.
+    pub fn neighbour_instrument(&self, part: usize, step: i32) -> Option<u8> {
+        let list = if part == DRUM_PART {
+            &self.drum_programs
+        } else {
+            &self.melodic_programs
+        };
+        if list.is_empty() {
+            return None;
+        }
+        let current = self
+            .synth
+            .channel_bank_patch(part)
+            .map(|(_, patch)| patch as u8)
+            .unwrap_or(0);
+        // Where the current program sits, or would sit; a step then
+        // walks the list with wraparound.
+        let len = list.len() as i32;
+        let at = match list.binary_search(&current) {
+            Ok(i) => i as i32 + step,
+            // Not in the list: the nearest entry in the step's own
+            // direction counts as the first step.
+            Err(i) if step > 0 => i as i32,
+            Err(i) => i as i32 - 1,
+        };
+        Some(list[at.rem_euclid(len) as usize])
     }
 
     /// Peak amplitude per part, 0..=1-ish, for the level meters.
