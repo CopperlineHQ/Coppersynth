@@ -1,8 +1,15 @@
-[workspace]
+[package]
+name = "coppersynth"
+version = "0.1.0"
+authors = ["Lee Hobson"]
+edition = "2021"
+license = "MIT"
+description = "Copperline's General MIDI sound module: a Sound Canvas-flavoured SoundFont synth with an MT-32 translation layer and front panel model"
+repository = "https://github.com/CopperlineHQ/Coppersynth"
+publish = false
 
-members = [
-    "rustysynth",
-    "coppersynth",
-]
+[dependencies]
+zip = { version = "8", default-features = false, features = ["deflate"] }
 
-resolver = "2"
+[build-dependencies]
+zip = "8"

@@ -3,9 +3,10 @@ MIT License
 Coppersynth:
 Copyright (C) 2026 Lee Hobson
 
-Coppersynth is a derivative work built on RustySynth; the rustysynth/
-directory carries its own MIT licence and copyright (Nobuaki Tanaka,
-for RustySynth and its parent MeltySynth), which continues to apply to
+Coppersynth is a derivative work built on RustySynth; the synthesis
+core under src/synth/ descends from it, and LICENSE-rustysynth.txt
+carries the original MIT licence and copyright (Nobuaki Tanaka, for
+RustySynth and its parent MeltySynth), which continues to apply to
 that code.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
