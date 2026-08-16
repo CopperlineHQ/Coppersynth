@@ -332,3 +332,39 @@ fn the_edges_are_calm() {
     let view = e.part_view(3);
     assert_eq!(view.muted, false);
 }
+
+/// MT-32 traffic selects the CM-64/32L kit when the font carries one
+/// -- GeneralUser does -- and a GM reset puts Standard back when auto
+/// detection stands down with it.
+#[test]
+fn mt32_traffic_selects_the_cm64_kit() {
+    let Some(mut e) = engine(Mt32Mode::Auto) else {
+        return;
+    };
+    assert_eq!(e.part_view(DRUM_PART).instrument, 0, "Standard until told");
+    // An MT-32 sysex identifies the traffic; the kit follows.
+    let body = [0x20u8, 0x00, 0x00, b'H', b'I'];
+    let sum = (128 - body.iter().map(|&b| b as u32).sum::<u32>() % 128) % 128;
+    let mut msg = vec![0xF0, 0x41, 0x10, 0x16, 0x12];
+    msg.extend(body);
+    msg.push(sum as u8);
+    msg.push(0xF7);
+    send(&mut e, &msg);
+    assert!(e.translating());
+    assert_eq!(
+        e.part_view(DRUM_PART).instrument,
+        127,
+        "the CM-64/32L kit is in for MT-32 traffic"
+    );
+    // The kit's own keys sound; whether the font voices the CM-32L
+    // extras is its business -- the range plumbing is the translator
+    // test's to prove.
+    send(&mut e, &[0x99, 38, 100]);
+    let mut block = vec![(0f32, 0f32); 4410];
+    e.render(&mut block);
+    assert!(e.part_activity()[DRUM_PART] > 0.0, "the snare sounds");
+    // A GM reset stands translation down and Standard returns.
+    send(&mut e, &[0xF0, 0x7E, 0x7F, 0x09, 0x01, 0xF7]);
+    assert!(!e.translating());
+    assert_eq!(e.part_view(DRUM_PART).instrument, 0, "Standard is back");
+}

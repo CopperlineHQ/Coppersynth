@@ -164,6 +164,9 @@ pub struct GmEngine {
     /// lone unit on a private cable answers -- so this is what the
     /// panel shows, not a filter.
     device_id: u8,
+    /// Whether the CM-64/32L kit was put on the drum part for MT-32
+    /// traffic, so leaving that mode can put Standard back.
+    cm64_selected: bool,
 }
 
 impl GmEngine {
@@ -229,6 +232,7 @@ impl GmEngine {
             master_reverb_cc: 64,
             master_chorus_cc: 64,
             device_id: 17,
+            cm64_selected: false,
         };
         engine.set_master_volume_cc(127);
         Ok(engine)
@@ -263,7 +267,7 @@ impl GmEngine {
                     self.display.push(text);
                 }
                 Event::Picture(rows) => self.panel_feed.push(Feed::Picture(rows)),
-                Event::Translating(_) => {}
+                Event::Translating(active) => self.follow_translation(active),
             }
         }
     }
@@ -517,6 +521,34 @@ impl GmEngine {
     pub fn set_mt32_mode(&mut self, mode: Mt32Mode) {
         self.translator = Mt32Translator::new(mode);
         self.configured_mode = mode;
+        let translating = self.translator.is_translating();
+        self.follow_translation(translating);
+    }
+
+    /// The drum kit follows the translation, as ScummVM's MT-32-to-GM
+    /// driver does it: the GS CM-64/32L kit (PC 128) carries the
+    /// MT-32 rhythm map, keys 24-87 and all, so it is selected whenever
+    /// the font offers it and MT-32 traffic is in force -- and Standard
+    /// comes back when the traffic stops, unless someone changed kits
+    /// by hand in the meantime.
+    fn follow_translation(&mut self, translating: bool) {
+        let want = translating && self.drum_programs.contains(&127);
+        if want == self.cm64_selected {
+            return;
+        }
+        self.cm64_selected = want;
+        self.translator.set_cm64_kit(want);
+        if want {
+            self.synth
+                .process_midi_message(DRUM_PART as i32, 0xC0, 127, 0);
+        } else if self
+            .synth
+            .channel_bank_patch(DRUM_PART)
+            .is_some_and(|(_, patch)| patch == 127)
+        {
+            self.synth
+                .process_midi_message(DRUM_PART as i32, 0xC0, 0, 0);
+        }
     }
 
     /// Voices sounding, and the most that can.
