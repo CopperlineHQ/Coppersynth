@@ -28,8 +28,10 @@ The workspace has two crates:
 
 The default soundfont is
 [GeneralUser GS](https://github.com/mrbumpy409/GeneralUser-GS) by
-S. Christian Collins, fetched from its repository at build time, zipped
-and embedded, licence text alongside. Delete `assets/GeneralUser-GS.sf2`
+S. Christian Collins -- an instrument library in its own right, with
+the complete General MIDI sound set including the SFX bank and drum
+kits at a very reasonable size. It is fetched from its repository at
+build time, zipped and embedded, licence text alongside. Delete `assets/GeneralUser-GS.sf2`
 to pick up a newer release on the next build.
 
 ## Building and testing
@@ -57,8 +59,9 @@ layer and reports what an MT-32 would have understood.
   (MIT) -- the synthesis core this work stands on.
 - Freeverb by Jezar at Dreampoint (public domain), via RustySynth.
 - [GeneralUser GS](https://github.com/mrbumpy409/GeneralUser-GS) by
-  S. Christian Collins, under its own licence (bundling and
-  redistribution permitted; the licence text ships in the bundle).
+  S. Christian Collins -- a complete General MIDI library of his own
+  making -- under its own licence (bundling and redistribution
+  permitted; the licence text ships in the bundle).
 - The Roland SC-55 owner's manual, as the behavioural reference for the
   front panel, and the MT-32 owner's manual for the translation layer's
   memory map.
