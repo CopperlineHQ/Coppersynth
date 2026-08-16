@@ -397,11 +397,19 @@ impl GmEngine {
     pub fn part_view(&self, part: usize) -> PartView {
         let (bank, patch) = self.synth.channel_bank_patch(part).unwrap_or((0, 0));
         let cc = |controller| self.synth.channel_cc(part, controller).unwrap_or(0);
-        let name = self
-            .translator
-            .channel_name(part)
-            .map(str::to_string)
-            .unwrap_or_else(|| self.preset_name(bank, patch));
+        // Translating, the part wears the MT-32 timbre's name -- unless
+        // the panel has taken the program over, in which case the glass
+        // must name what is actually loaded, or the edit looks ignored.
+        let panel_owns_program =
+            self.parts.locks.get(part).copied().unwrap_or(0) & LOCK_PROGRAM != 0;
+        let name = if panel_owns_program {
+            self.preset_name(bank, patch)
+        } else {
+            self.translator
+                .channel_name(part)
+                .map(str::to_string)
+                .unwrap_or_else(|| self.preset_name(bank, patch))
+        };
         PartView {
             instrument: (patch & 0x7F) as u8,
             name,

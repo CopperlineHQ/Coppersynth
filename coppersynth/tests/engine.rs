@@ -204,6 +204,16 @@ fn mt32_names_reach_the_panel() {
     send(&mut e, &[0xC1, 12]);
     let name = e.part_view(1).name;
     assert_eq!(name, "Pipe Org 1", "the MT-32's own name for patch 12");
+    // A panel edit takes the program over, and the glass names what is
+    // actually loaded now -- not the timbre the game meant.
+    e.set_part_instrument(1, 56);
+    let view = e.part_view(1);
+    assert_eq!(view.instrument, 56);
+    assert_ne!(view.name, "Pipe Org 1");
+    assert!(!view.name.is_empty(), "the soundfont names the new program");
+    // And the game's next re-programming cannot take it back.
+    send(&mut e, &[0xC1, 12]);
+    assert_eq!(e.part_view(1).instrument, 56, "the panel's word stands");
 }
 
 /// Sound Canvas display text reaches the display queue in every mode,
