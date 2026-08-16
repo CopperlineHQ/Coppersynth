@@ -44,7 +44,7 @@ draws; every character is decided here.
 - The sixteen-part layer: receive channels, mutes and solo, per-part
   level caps, key shifts, panel edits that hold against the wire, and
   live meters read straight from the voices.
-- The MT-32-to-GM translation, built from Sierra's own driver data:
+- The MT-32-to-GM translation, inspired by Sierra's own driver data:
   custom timbre uploads matched by name, patch memory re-pointed,
   rhythm remapped, display text shown on the LCD.
 - A synthesis core derived from RustySynth (under `src/synth/`),
