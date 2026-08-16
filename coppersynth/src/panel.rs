@@ -472,7 +472,7 @@ impl FrontPanel {
             Pair::Instrument => {
                 let next = if view.drums {
                     // Kits are a list, and the list is the font's.
-                    engine.neighbour_instrument(part, step(0)).unwrap_or(0)
+                    engine.neighbour_kit(step(0)).unwrap_or(0)
                 } else {
                     // Melodic numbers never shift: a hole in a sparse
                     // font stays a numbered slot, shown as Empty.

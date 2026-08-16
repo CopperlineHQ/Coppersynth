@@ -456,15 +456,14 @@ impl GmEngine {
     /// the soundfont's own kit list. Kits are a list by nature; melodic
     /// programs are numbered slots and step plainly so their numbers
     /// stay put. `None` when the font carries no kits at all.
-    pub fn neighbour_instrument(&self, part: usize, step: i32) -> Option<u8> {
-        let _ = part;
+    pub fn neighbour_kit(&self, step: i32) -> Option<u8> {
         let list = &self.drum_programs;
         if list.is_empty() {
             return None;
         }
         let current = self
             .synth
-            .channel_bank_patch(part)
+            .channel_bank_patch(DRUM_PART)
             .map(|(_, patch)| patch as u8)
             .unwrap_or(0);
         // Where the current program sits, or would sit; a step then
