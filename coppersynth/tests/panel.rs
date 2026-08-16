@@ -180,6 +180,8 @@ fn all_mode_broadcasts_to_every_part() {
     let screen = panel.screen(&e, 4_000);
     assert_eq!(screen.part, "ALL");
     assert!(screen.all_led);
+    let bank: String = e.bank_name().chars().take(16).collect();
+    assert_eq!(screen.name, bank, "ALL introduces the loaded bank");
     assert_eq!(screen.level, "127");
     assert_eq!(screen.midi_ch, "17", "the factory device ID");
     panel.button(&mut e, Button::Arrow(Pair::Level, Dir::Left));

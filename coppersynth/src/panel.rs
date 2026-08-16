@@ -521,7 +521,8 @@ impl FrontPanel {
             return Screen {
                 part: "ALL".to_string(),
                 instrument: String::new(),
-                name: "- Coppersynth -".to_string(),
+                // The unit introduces the bank it is playing from.
+                name: engine.bank_name().chars().take(NAME_COLS).collect(),
                 level: show(PartSetting::Level, |v| v.to_string()),
                 pan: show(PartSetting::Pan, |v| pan_label(v as u8)),
                 reverb: show(PartSetting::Reverb, |v| v.to_string()),
