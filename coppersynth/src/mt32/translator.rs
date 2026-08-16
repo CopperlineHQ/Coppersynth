@@ -118,6 +118,10 @@ pub struct Mt32Translator {
     /// display: a preset's factory name, or the name the game uploaded
     /// with a custom. For the host's front panel.
     channel_name: [Option<String>; 16],
+    /// Whether the host has the CM-64/32L drum kit selected. That kit
+    /// carries the MT-32 rhythm map itself, so the pass-through widens
+    /// to its whole key range and the kit does the deciding.
+    cm64_kit: bool,
 
     events: Vec<Event>,
 }
@@ -141,6 +145,7 @@ impl Mt32Translator {
             sent_bend_range: [0xFF; 16],
             emitted_key: [[NO_KEY; 128]; 16],
             channel_name: std::array::from_fn(|_| None),
+            cm64_kit: false,
             events: Vec::new(),
         };
         if t.active {
@@ -151,6 +156,13 @@ impl Mt32Translator {
 
     pub fn is_translating(&self) -> bool {
         self.active
+    }
+
+    /// Tell the translator the CM-64/32L kit is on the drum part (or
+    /// gone again), which widens the rhythm pass-through to the kit's
+    /// own range.
+    pub fn set_cm64_kit(&mut self, selected: bool) {
+        self.cm64_kit = selected;
     }
 
     /// What the timbre on `channel` is called, while translating: the
@@ -302,7 +314,17 @@ impl Mt32Translator {
             }
             // A custom timbre on a drum key has no GM meaning; identity
             // is the least wrong answer inside the kit.
-            return tables::rhythm_key_to_gm(key);
+            return self.kit_key(key);
+        }
+        self.kit_key(key)
+    }
+
+    /// Where an unassigned rhythm key lands: with the CM-64/32L kit in
+    /// place the kit carries the MT-32 map, so its whole range passes;
+    /// on a plain GM kit only the range the two maps share does.
+    fn kit_key(&self, key: u8) -> Option<u8> {
+        if self.cm64_kit {
+            return (24..=87).contains(&key).then_some(key);
         }
         tables::rhythm_key_to_gm(key)
     }

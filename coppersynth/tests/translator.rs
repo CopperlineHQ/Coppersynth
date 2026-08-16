@@ -251,3 +251,31 @@ fn a_corrupt_checksum_is_dropped_whole() {
         "the write must not have applied: {out:?}"
     );
 }
+
+/// The CM-64/32L kit carries the MT-32 rhythm map itself, so with it
+/// in place the whole 24-87 range passes through; on a plain GM kit
+/// only the shared 35-75 window does.
+#[test]
+fn the_cm64_kit_widens_the_rhythm_range() {
+    let mut t = Mt32Translator::new(Mt32Mode::On);
+    let _ = push_all(&mut t, &[]);
+    // Key 30 on the rhythm channel: outside the shared window, dropped.
+    let out = push_all(&mut t, &[0x99, 30, 100]);
+    assert!(
+        !out.iter()
+            .any(|e| matches!(e, Event::Midi { command: 0x90, .. })),
+        "a plain kit has nothing at key 30"
+    );
+    t.set_cm64_kit(true);
+    let out = push_all(&mut t, &[0x99, 30, 100]);
+    assert!(
+        out.contains(&midi(0x90, 9, 30, 100)),
+        "the CM-64 kit answers across its own range"
+    );
+    let out = push_all(&mut t, &[0x99, 23, 100]);
+    assert!(
+        !out.iter()
+            .any(|e| matches!(e, Event::Midi { command: 0x90, .. })),
+        "and nothing below the kit's own floor"
+    );
+}
