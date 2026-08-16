@@ -3,7 +3,12 @@ name = "coppersynth"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "Coppersynth: Copperline's General MIDI engine -- rustysynth with an MT-32 translation layer"
+publish = false
+description = "Coppersynth: a Sound Canvas-flavoured SoundFont synth with an MT-32 translation layer and front panel model"
 
 [dependencies]
+zip = { version = "8", default-features = false, features = ["deflate"] }
 rustysynth = { path = "../rustysynth" }
+
+[build-dependencies]
+zip = "8"

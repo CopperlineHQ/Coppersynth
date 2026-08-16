@@ -342,6 +342,67 @@ fn reverb_and_chorus_are_audible() {
     );
 }
 
+/// The bundled bank is really in there: no files, no configuration,
+/// a note. The zip pipeline, the licence and the metadata all ride on
+/// this working.
+#[test]
+fn the_bundled_bank_needs_no_files() {
+    let mut e = GmEngine::open_bundled(44_100, Mt32Mode::Off).expect("the bundle opens");
+    assert!(
+        e.bank_name().starts_with("GeneralUser"),
+        "the bank names itself: {:?}",
+        e.bank_name()
+    );
+    send(&mut e, &[0x90, 60, 100]);
+    assert!(render_rms(&mut e, 4410) > 0.001, "and it plays");
+}
+
+/// The chorus genuinely modulates: the wet signal's best-fit delay
+/// against the dry drifts across the LFO's period. A broken LFO would
+/// leave a static comb -- louder on a meter, invisible to the ear.
+#[test]
+fn the_chorus_actually_swims() {
+    let render = |chorus: u8| -> Option<Vec<f32>> {
+        let mut e = engine(Mt32Mode::Off)?;
+        e.set_part_chorus(0, chorus);
+        // A church organ holds perfectly still.
+        send(&mut e, &[0xC0, 19, 0x90, 60, 100]);
+        let mut block = vec![(0f32, 0f32); 44_100 * 3];
+        e.render(&mut block);
+        Some(block.iter().map(|(l, _)| *l).collect())
+    };
+    let Some(dry) = render(0) else {
+        return;
+    };
+    let wet: Vec<f32> = render(127)
+        .unwrap()
+        .iter()
+        .zip(&dry)
+        .map(|(w, d)| w - d)
+        .collect();
+    let best_lag = |centre: usize| -> isize {
+        let mut best = (0isize, f32::MIN);
+        for lag in 40..180isize {
+            let mut sum = 0f32;
+            for i in 0..1024 {
+                sum += dry[centre + i] * wet[centre + i + lag as usize];
+            }
+            if sum > best.1 {
+                best = (lag, sum);
+            }
+        }
+        best.0
+    };
+    // Half the 0.4 Hz LFO period apart, the delay should have swum a
+    // long way between its extremes.
+    let early = best_lag(44_100);
+    let late = best_lag(44_100 + 55_125);
+    assert!(
+        (early - late).abs() > 40,
+        "the chorus delay must drift with its LFO: {early} vs {late}"
+    );
+}
+
 /// The layer's bounds hold: parts count, and out-of-range accessors
 /// answer rather than panic.
 #[test]
