@@ -3,6 +3,7 @@ name = "coppersynth"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
+repository = "https://github.com/CopperlineHQ/coppersynth"
 publish = false
 description = "Coppersynth: a Sound Canvas-flavoured SoundFont synth with an MT-32 translation layer and front panel model"
 
