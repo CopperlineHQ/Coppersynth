@@ -50,7 +50,7 @@ fn the_boot_line_greets_and_names_the_bank() {
     assert_eq!(greeting.name, "COPPERSYNTH");
     assert_eq!(greeting.part, "");
     let bank = panel.screen(&e, 1_600);
-    let expect: String = e.bank_name().chars().take(16).collect();
+    let expect: String = e.bank_name().chars().take(20).collect();
     assert!(!expect.is_empty(), "GeneralUser names itself");
     assert_eq!(bank.name, expect);
     let home = panel.screen(&e, 3_100);
@@ -180,7 +180,7 @@ fn all_mode_broadcasts_to_every_part() {
     let screen = panel.screen(&e, 4_000);
     assert_eq!(screen.part, "ALL");
     assert!(screen.all_led);
-    let bank: String = e.bank_name().chars().take(16).collect();
+    let bank: String = e.bank_name().chars().take(20).collect();
     assert_eq!(screen.name, bank, "ALL introduces the loaded bank");
     assert_eq!(screen.level, "127");
     assert_eq!(screen.midi_ch, "17", "the factory device ID");
@@ -325,7 +325,7 @@ fn the_splash_egg_boots_verbose() {
     // Three seconds of splash standing in for the greeting, then the
     // bank introduces itself as on any boot.
     assert_eq!(panel.screen(&e, 2_900).subtitle, expect);
-    let bank: String = e.bank_name().chars().take(16).collect();
+    let bank: String = e.bank_name().chars().take(20).collect();
     let after = panel.screen(&e, 3_200);
     assert_eq!(after.name, bank);
     assert_eq!(after.subtitle, "");
@@ -374,14 +374,17 @@ fn long_letters_scroll_round() {
     for feed in e.take_panel_feed() {
         panel.feed(feed);
     }
-    assert_eq!(panel.screen(&e, 20_000).name, "THE QUICK BROWN ");
+    assert_eq!(panel.screen(&e, 20_000).name, "THE QUICK BROWN FOX ");
     assert_eq!(
         panel.screen(&e, 20_000 + 600 + 300).name,
-        "HE QUICK BROWN F"
+        "HE QUICK BROWN FOX J"
     );
     // One full cycle later it is back at the head.
-    let cycle = 600 + 9 * 300 + 1500;
-    assert_eq!(panel.screen(&e, 20_000 + cycle).name, "THE QUICK BROWN ");
+    let cycle = 600 + 5 * 300 + 1500;
+    assert_eq!(
+        panel.screen(&e, 20_000 + cycle).name,
+        "THE QUICK BROWN FOX "
+    );
 }
 
 /// A dot picture owns the matrix for a moment, exactly as mapped in
