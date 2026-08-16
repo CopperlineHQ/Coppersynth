@@ -177,6 +177,30 @@ impl GmEngine {
             .map_err(|e| format!("{}: {e}", soundfont.display()))
     }
 
+    /// Open the bank Coppersynth carries inside itself: GeneralUser GS,
+    /// fetched from its repository when the library was built and
+    /// zipped in with its licence. This is the synth with no
+    /// configuration at all.
+    pub fn open_bundled(sample_rate: u32, mode: Mt32Mode) -> Result<Self, String> {
+        static BUNDLE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/bundled-bank.zip"));
+        if BUNDLE.is_empty() {
+            return Err("built without the bundled soundfont (offline build)".to_string());
+        }
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(BUNDLE))
+            .map_err(|e| format!("bundled bank: {e}"))?;
+        let entry = (0..archive.len())
+            .find(|&i| {
+                archive
+                    .by_index(i)
+                    .is_ok_and(|f| f.name().to_ascii_lowercase().ends_with(".sf2"))
+            })
+            .ok_or_else(|| "bundled bank: no .sf2 inside".to_string())?;
+        let mut reader = archive
+            .by_index(entry)
+            .map_err(|e| format!("bundled bank: {e}"))?;
+        Self::open_reader(&mut reader, sample_rate, mode)
+    }
+
     /// Open a soundfont from any byte stream: a file, or a host's
     /// decompressor -- how the bank arrives is the host's business.
     pub fn open_reader<R: std::io::Read>(

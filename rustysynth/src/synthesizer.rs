@@ -56,6 +56,10 @@ impl Synthesizer {
     /// hall: banks' CC91 modulators top out near 0.4 of the spec's send
     /// range, and Freeverb's 0.015 input gain leaves that a whisper.
     const REVERB_RETURN: f32 = 4.0_f32;
+    /// The chorus return, for the same reason: the unit modulates
+    /// correctly but sat too quiet in the mix to be heard as more than
+    /// a faint comb.
+    const CHORUS_RETURN: f32 = 2.0_f32;
     /// The percussion channel.
     pub const PERCUSSION_CHANNEL: usize = 9;
 
@@ -440,16 +444,10 @@ impl Synthesizer {
                 chorus_output_left,
                 chorus_output_right,
             );
-            ArrayMath::multiply_add(
-                self.master_volume * self.master_chorus_gain,
-                chorus_output_left,
-                &mut self.block_left[..],
-            );
-            ArrayMath::multiply_add(
-                self.master_volume * self.master_chorus_gain,
-                chorus_output_right,
-                &mut self.block_right[..],
-            );
+            let chorus_gain =
+                self.master_volume * self.master_chorus_gain * Synthesizer::CHORUS_RETURN;
+            ArrayMath::multiply_add(chorus_gain, chorus_output_left, &mut self.block_left[..]);
+            ArrayMath::multiply_add(chorus_gain, chorus_output_right, &mut self.block_right[..]);
 
             let reverb = &mut effects.reverb;
             let reverb_input = &mut effects.reverb_input[..];

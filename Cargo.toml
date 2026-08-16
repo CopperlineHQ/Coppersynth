@@ -1,9 +1,7 @@
 [workspace]
 
 members = [
-    "example",
     "rustysynth",
-    "rustysynth_test",
     "coppersynth",
 ]
 

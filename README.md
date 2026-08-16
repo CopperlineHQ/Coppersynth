@@ -1,175 +1,66 @@
-# RustySynth
+# Coppersynth
 
-RustySynth is a SoundFont MIDI synthesizer written in pure Rust, ported from [MeltySynth](https://github.com/sinshu/meltysynth).
+Coppersynth is the General MIDI sound module inside
+[Copperline](https://github.com/CopperlineHQ/Copperline), built to play
+the MIDI soundtracks of Amiga-era games -- and, one day, to stand on its
+own. It is a SoundFont synthesizer with the habits of a Roland Sound
+Canvas: sixteen parts, an SC-55-shaped front panel model, and an MT-32
+translation layer in front, so a Sierra game that uploads sysex meant
+for an MT-32 "just works" and is none the wiser.
 
+The workspace has two crates:
 
+- `rustysynth/` -- a derivative of
+  [RustySynth](https://github.com/sinshu/rustysynth) (v1.3.6), the pure
+  Rust SoundFont synthesizer by Nobuaki Tanaka, itself ported from his
+  [MeltySynth](https://github.com/sinshu/meltysynth). The fork adds
+  SF2.01 modulator support, live per-channel introspection, master
+  effect returns, tolerant loading that repairs bruised soundfonts
+  instead of refusing them, and effect calibration fixes (the reverb
+  and chorus feeds were being silenced by the dry path's audibility
+  gate). The reverb is Freeverb, as it is upstream.
+- `coppersynth/` -- the engine an emulator embeds: a byte in from the
+  serial line, stereo frames out. It carries the sixteen-part layer
+  (receive channels, mutes, level caps, key shifts), the MT-32-to-GM
+  translation built from Sierra's own driver data, the Sound Canvas
+  display sysex (letters and dot pictures), and the front panel state
+  machine -- every character the host draws is composed here.
 
-## Features
+The default soundfont is
+[GeneralUser GS](https://github.com/mrbumpy409/GeneralUser-GS) by
+S. Christian Collins, fetched from its repository at build time, zipped
+and embedded, licence text alongside. Delete `assets/GeneralUser-GS.sf2`
+to pick up a newer release on the next build.
 
-* Suitable for both real-time and offline synthesis.
-* Supports standard MIDI files with additional features including dynamic tempo changing.
-* No dependencies other than the standard library.
+## Building and testing
 
-
-
-## Demo
-
-This is a demo video to show the synthesizer running on [rust-sfml](https://github.com/jeremyletang/rust-sfml) in real-time.
-
-https://www.youtube.com/watch?v=o9rPTJIPmVk
-
-[![Youtube video](rustysynth-yt.png)](https://www.youtube.com/watch?v=o9rPTJIPmVk)
-
-
-
-## Installation
-
-RustySynth is available on [crates.io](https://crates.io/crates/rustysynth):
-
-```
-cargo add rustysynth
-```
-
-
-
-## Examples
-
-Here are some example codes.
-
-> [!NOTE]
-> Each example omits the `use` statements.
-> For full code, see the respective links.
-
-[An example code to synthesize a simple chord:](example/src/main.rs#L15)
-
-```rust
-// Load the SoundFont.
-let mut sf2 = File::open("TimGM6mb.sf2").unwrap();
-let sound_font = Arc::new(SoundFont::new(&mut sf2).unwrap());
-
-// Create the synthesizer.
-let settings = SynthesizerSettings::new(44100);
-let mut synthesizer = Synthesizer::new(&sound_font, &settings).unwrap();
-
-// Play some notes (middle C, E, G).
-synthesizer.note_on(0, 60, 100);
-synthesizer.note_on(0, 64, 100);
-synthesizer.note_on(0, 67, 100);
-
-// The output buffer (3 seconds).
-let sample_count = (3 * settings.sample_rate) as usize;
-let mut left: Vec<f32> = vec![0_f32; sample_count];
-let mut right: Vec<f32> = vec![0_f32; sample_count];
-
-// Render the waveform.
-synthesizer.render(&mut left[..], &mut right[..]);
+```sh
+cargo build --release
+cargo test --release
 ```
 
-[Another example code to synthesize a MIDI file:](example/src/main.rs#L41)
+The first build downloads the soundfont (about 32 MB) into `assets/`;
+`tools/fetch-assets.sh` also fetches the GeneralUser demo MIDIs for the
+listening rig (`cargo run --bin ab-render`), which renders A/B pairs
+against FluidSynth output for by-ear regression checks. The
+`replay-mt32` tool replays captured game MIDI through the translation
+layer and reports what an MT-32 would have understood.
 
-```rust
-// Load the SoundFont.
-let mut sf2 = File::open("TimGM6mb.sf2").unwrap();
-let sound_font = Arc::new(SoundFont::new(&mut sf2).unwrap());
+## Credits
 
-// Load the MIDI file.
-let mut mid = File::open("flourish.mid").unwrap();
-let midi_file = Arc::new(MidiFile::new(&mut mid).unwrap());
+- [RustySynth](https://github.com/sinshu/rustysynth) and
+  [MeltySynth](https://github.com/sinshu/meltysynth) by Nobuaki Tanaka
+  (MIT) -- the synthesis core this work stands on.
+- Freeverb by Jezar at Dreampoint (public domain), via RustySynth.
+- [GeneralUser GS](https://github.com/mrbumpy409/GeneralUser-GS) by
+  S. Christian Collins, under its own licence (bundling and
+  redistribution permitted; the licence text ships in the bundle).
+- The Roland SC-55 owner's manual, as the behavioural reference for the
+  front panel, and the MT-32 owner's manual for the translation layer's
+  memory map.
+- ScummVM's MT-32-to-GM driver and wildmidi, cross-referenced (with
+  Sierra's own patch data) when the translation tables were assembled;
+  the tables here were built independently from that comparison.
 
-// Create the MIDI file sequencer.
-let settings = SynthesizerSettings::new(44100);
-let synthesizer = Synthesizer::new(&sound_font, &settings).unwrap();
-let mut sequencer = MidiFileSequencer::new(synthesizer);
-
-// Play the MIDI file.
-sequencer.play(&midi_file, false);
-
-// The output buffer.
-let sample_count = (settings.sample_rate as f64 * midi_file.get_length()) as usize;
-let mut left: Vec<f32> = vec![0_f32; sample_count];
-let mut right: Vec<f32> = vec![0_f32; sample_count];
-
-// Render the waveform.
-sequencer.render(&mut left[..], &mut right[..]);
-```
-
-[Yet another example code to synthesize a MIDI file in real-time with the TinyAudio crate:](https://github.com/sinshu/rustysynth/blob/tinyaudio/workspace/src/main.rs)
-
-```rust
-// Setup the audio output.
-let params = OutputDeviceParameters {
-    channels_count: 2,
-    sample_rate: 44100,
-    channel_sample_count: 4410,
-};
-
-// Buffer for the audio output.
-let mut left: Vec<f32> = vec![0_f32; params.channel_sample_count];
-let mut right: Vec<f32> = vec![0_f32; params.channel_sample_count];
-
-// Load the SoundFont.
-let mut sf2 = File::open("TimGM6mb.sf2").unwrap();
-let sound_font = Arc::new(SoundFont::new(&mut sf2).unwrap());
-
-// Load the MIDI file.
-let mut mid = File::open("flourish.mid").unwrap();
-let midi_file = Arc::new(MidiFile::new(&mut mid).unwrap());
-
-// Create the MIDI file sequencer.
-let settings = SynthesizerSettings::new(params.sample_rate as i32);
-let synthesizer = Synthesizer::new(&sound_font, &settings).unwrap();
-let mut sequencer = MidiFileSequencer::new(synthesizer);
-
-// Play the MIDI file.
-sequencer.play(&midi_file, false);
-
-// Start the audio output.
-let _device = run_output_device(params, {
-    move |data| {
-        sequencer.render(&mut left[..], &mut right[..]);
-        for (i, value) in left.iter().interleave(right.iter()).enumerate() {
-            data[i] = *value;
-        }
-    }
-})
-.unwrap();
-
-// Wait for 10 seconds.
-std::thread::sleep(std::time::Duration::from_secs(10));
-```
-
-
-
-## Todo
-
-* __Wave synthesis__
-    - [x] SoundFont reader
-    - [x] Waveform generator
-    - [x] Envelope generator
-    - [x] Low-pass filter
-    - [x] Vibrato LFO
-    - [x] Modulation LFO
-* __MIDI message processing__
-    - [x] Note on/off
-    - [x] Bank selection
-    - [x] Modulation
-    - [x] Volume control
-    - [x] Pan
-    - [x] Expression
-    - [x] Hold pedal
-    - [x] Program change
-    - [x] Pitch bend
-    - [x] Tuning
-* __Effects__
-    - [x] Reverb
-    - [x] Chorus
-* __Other things__
-    - [x] Standard MIDI file support
-    - [x] MIDI file loop extension support
-    - [x] Performace optimization
-
-
-
-## License
-
-RustySynth is available under [the MIT license](LICENSE.txt).
+Coppersynth is MIT licensed; see `LICENSE.txt`, and
+`rustysynth/LICENSE.txt` for the base work's licence.
