@@ -49,6 +49,24 @@ pub const PARTS: usize = Synthesizer::CHANNEL_COUNT;
 /// keys its percussion bank off this channel.
 pub const DRUM_PART: usize = 9;
 
+/// The demo songs baked into the library, by title. The panel's demo
+/// mode plays them; nothing else knows they exist. "Railgun Rain" is
+/// by Ivan Stanton (northivanastan), public domain; "Title Screen" has
+/// no known artist and its licence asks nothing.
+pub const DEMO_SONGS: [&str; 2] = ["Railgun Rain", "Title Screen"];
+const DEMO_DATA: [&[u8]; 2] = [
+    include_bytes!("../demo/railgun-rain.mid"),
+    include_bytes!("../demo/title-screen.mid"),
+];
+
+/// A demo song in flight: its events flattened to seconds, and how far
+/// the render clock has carried it.
+struct Demo {
+    events: Vec<(f64, u8, u8, u8)>,
+    at: usize,
+    clock: f64,
+}
+
 /// Nothing sounding on this key of this part.
 const SILENT: u8 = 0xFF;
 
@@ -166,6 +184,7 @@ pub struct GmEngine {
     /// Whether the CM-64/32L kit was put on the drum part for MT-32
     /// traffic, so leaving that mode can put Standard back.
     cm64_selected: bool,
+    demo: Option<Demo>,
 }
 
 impl GmEngine {
@@ -247,6 +266,7 @@ impl GmEngine {
             master_chorus_cc: 64,
             device_id: 17,
             cm64_selected: false,
+            demo: None,
         };
         engine.set_master_volume_cc(127);
         Ok(engine)
@@ -264,6 +284,10 @@ impl GmEngine {
 
     /// Take one byte off the serial line.
     pub fn write_byte(&mut self, byte: u8) {
+        // A unit playing its demo ignores MIDI IN, as the hardware does.
+        if self.demo.is_some() {
+            return;
+        }
         // Drain into locals first: the borrow of the translator ends
         // before the synthesizer is touched.
         let events: Vec<Event> = self.translator.push(byte).collect();
@@ -374,6 +398,7 @@ impl GmEngine {
         // The synthesizer wants split channels; the scratch pair grows
         // to the largest block asked for and is never given back.
         let n = frames.len();
+        self.pump_demo(n);
         self.scratch_left.resize(n, 0.0);
         self.scratch_right.resize(n, 0.0);
         let (left, right) = (&mut self.scratch_left, &mut self.scratch_right);
@@ -654,6 +679,63 @@ impl GmEngine {
         if mute {
             self.synth.note_off_all_channel(part as i32, false);
             self.parts.sounded[part] = [SILENT; 128];
+        }
+    }
+
+    // --- the demo player -------------------------------------------------
+
+    /// Start demo song `song` from its beginning.
+    pub fn demo_play(&mut self, song: usize) {
+        self.demo_stop();
+        let Some(data) = DEMO_DATA.get(song) else {
+            return;
+        };
+        let Ok(file) = rustysynth::MidiFile::new(&mut std::io::Cursor::new(*data)) else {
+            return;
+        };
+        self.demo = Some(Demo {
+            events: file.events().collect(),
+            at: 0,
+            clock: 0.0,
+        });
+    }
+
+    /// Stop the demo and let the room ring down.
+    pub fn demo_stop(&mut self) {
+        if self.demo.take().is_some() {
+            self.all_notes_off();
+        }
+    }
+
+    /// Whether a started song has run out of events.
+    pub fn demo_finished(&self) -> bool {
+        self.demo.as_ref().is_some_and(|d| d.at >= d.events.len())
+    }
+
+    /// Carry the demo forward by one rendered block, its due events
+    /// going through the same part layer the wire uses.
+    fn pump_demo(&mut self, frames: usize) {
+        if self.demo.is_none() {
+            return;
+        }
+        let step = frames as f64 / self.sample_rate as f64;
+        if let Some(demo) = &mut self.demo {
+            demo.clock += step;
+        }
+        loop {
+            let due = match &self.demo {
+                Some(d) if d.at < d.events.len() && d.events[d.at].0 <= d.clock => {
+                    Some(d.events[d.at])
+                }
+                _ => None,
+            };
+            let Some((_, status, data1, data2)) = due else {
+                break;
+            };
+            if let Some(demo) = &mut self.demo {
+                demo.at += 1;
+            }
+            self.deliver(status & 0xF0, status & 0x0F, data1, data2);
         }
     }
 
