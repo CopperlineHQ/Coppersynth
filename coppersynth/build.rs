@@ -51,7 +51,9 @@ fn bundle_soundfont() {
     let Ok(data) = std::fs::read(&font) else {
         // No cache and no network: the library still builds, without
         // its bundled bank, and says so at runtime.
-        println!("cargo:warning=no GeneralUser-GS.sf2 (offline?); building without the bundled bank");
+        println!(
+            "cargo:warning=no GeneralUser-GS.sf2 (offline?); building without the bundled bank"
+        );
         std::fs::write(&out, []).unwrap();
         return;
     };
@@ -63,7 +65,8 @@ fn bundle_soundfont() {
     zip.start_file("GeneralUser-GS.sf2", options).unwrap();
     zip.write_all(&data).unwrap();
     if let Ok(text) = std::fs::read(&licence) {
-        zip.start_file("GeneralUser-GS.LICENSE.txt", options).unwrap();
+        zip.start_file("GeneralUser-GS.LICENSE.txt", options)
+            .unwrap();
         zip.write_all(&text).unwrap();
     }
     zip.finish().unwrap();

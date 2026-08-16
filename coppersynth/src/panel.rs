@@ -135,8 +135,9 @@ const SCROLL_TAIL_MS: u64 = 1500;
 const PICTURE_MS: u64 = 3000;
 /// The prompt's lamps flash about once a second.
 const FLASH_MS: u64 = 500;
-/// The text area's width in characters.
-pub const NAME_COLS: usize = 16;
+/// The text area's width in characters -- a full SF2 preset name,
+/// which the spec caps at twenty.
+pub const NAME_COLS: usize = 20;
 /// The bar matrix: sixteen columns of sixteen dots.
 pub const BAR_ROWS: u32 = 16;
 /// How fast a bar falls once the sound under it has, full scale per
