@@ -84,6 +84,9 @@ fn mute_gates_and_silences() {
     let Some(mut e) = engine(Mt32Mode::Off) else {
         return;
     };
+    // A dry room: muting silences the part, but a reverb tail would
+    // ring past the gate, and it is the gate under test.
+    e.set_part_reverb(0, 0);
     send(&mut e, &[0x90, 60, 100]);
     assert!(render_rms(&mut e, 4410) > 0.001);
     e.set_part_mute(0, true);
@@ -271,6 +274,48 @@ fn panel_edits_hold_against_the_wire() {
     e.reset();
     send(&mut e, &[0xC0, 7]);
     assert_eq!(e.part_view(0).instrument, 7);
+}
+
+/// The effects respond across their whole range: 0 is dry, 127 is
+/// unmistakably wet, and the GM default sits between. A woodblock is
+/// over in an instant, so everything after the hit is the room.
+#[test]
+fn reverb_and_chorus_are_audible() {
+    let probe = |reverb: u8, chorus: u8| -> (f32, f32) {
+        let Some(mut e) = engine(Mt32Mode::Off) else {
+            return (-1.0, -1.0);
+        };
+        e.set_part_reverb(0, reverb);
+        e.set_part_chorus(0, chorus);
+        send(&mut e, &[0xC0, 115, 0x90, 60, 110]);
+        let held = render_rms(&mut e, 44_100);
+        send(&mut e, &[0x80, 60, 0]);
+        let ring = render_rms(&mut e, 22_050);
+        (held, ring)
+    };
+    let (dry_held, dry_ring) = probe(0, 0);
+    if dry_held < 0.0 {
+        return;
+    }
+    let (mid_held, mid_ring) = probe(40, 0);
+    let (wet_held, wet_ring) = probe(127, 0);
+    assert!(
+        wet_held > dry_held * 1.3,
+        "full reverb must be unmistakable"
+    );
+    assert!(
+        mid_held > dry_held * 1.05 && mid_held < wet_held,
+        "the GM default sits between dry and drenched"
+    );
+    assert!(
+        wet_ring > dry_ring * 5.0 && mid_ring > dry_ring * 2.0,
+        "the room rings after the hit, more the more send"
+    );
+    let (chorus_held, _) = probe(0, 127);
+    assert!(
+        chorus_held > dry_held * 1.1,
+        "full chorus thickens the note audibly"
+    );
 }
 
 /// The layer's bounds hold: parts count, and out-of-range accessors

@@ -206,9 +206,17 @@ impl Voice {
             .iter()
             .chain(region.preset.modulators.iter())
         {
+            // Only a modulator that routes the send's own controller
+            // takes it over from the channel scaling; a bank adding
+            // reverb from velocity or a constant must not disconnect
+            // the player's CC91.
             match m.destination {
-                GeneratorType::REVERB_EFFECTS_SEND => self.reverb_from_mods = true,
-                GeneratorType::CHORUS_EFFECTS_SEND => self.chorus_from_mods = true,
+                GeneratorType::REVERB_EFFECTS_SEND if m.source_cc() == Some(91) => {
+                    self.reverb_from_mods = true
+                }
+                GeneratorType::CHORUS_EFFECTS_SEND if m.source_cc() == Some(93) => {
+                    self.chorus_from_mods = true
+                }
                 _ => {}
             }
             if m.is_static() {
@@ -412,15 +420,12 @@ impl Voice {
             self.current_mix_gain_right = mix_gain * angle.sin();
         }
 
-        // A bank that routes CC91/CC93 itself has taken over the send;
-        // adding the synthesizer's own channel scaling as well would apply
-        // the controller twice.
+        // A bank that routes CC91/CC93 itself has taken over the send
+        // entirely: its curve alone decides, without the channel scaling
+        // (the controller would apply twice) and without the instrument's
+        // own base send (the player's zero must mean zero).
         self.current_reverb_send = if self.reverb_from_mods {
-            SoundFontMath::clamp(
-                self.instrument_reverb + 0.001_f32 * self.dyn_reverb,
-                0_f32,
-                1_f32,
-            )
+            SoundFontMath::clamp(0.001_f32 * self.dyn_reverb, 0_f32, 1_f32)
         } else {
             SoundFontMath::clamp(
                 channel_info.get_reverb_send() + self.instrument_reverb,
@@ -429,11 +434,7 @@ impl Voice {
             )
         };
         self.current_chorus_send = if self.chorus_from_mods {
-            SoundFontMath::clamp(
-                self.instrument_chorus + 0.001_f32 * self.dyn_chorus,
-                0_f32,
-                1_f32,
-            )
+            SoundFontMath::clamp(0.001_f32 * self.dyn_chorus, 0_f32, 1_f32)
         } else {
             SoundFontMath::clamp(
                 channel_info.get_chorus_send() + self.instrument_chorus,

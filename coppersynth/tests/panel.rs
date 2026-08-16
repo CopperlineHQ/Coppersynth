@@ -98,8 +98,35 @@ fn instrument_arrows_step_programs_and_kits() {
     let screen = panel.screen(&e, 4_000);
     assert_eq!(screen.part, "10");
     assert!(screen.name.starts_with('*'), "a drum set wears the star");
+    // The arrow lands on the next kit the font actually carries.
+    let next = e.neighbour_instrument(DRUM_PART, 1).expect("kits exist");
+    assert_ne!(next, 0, "the font carries more than one kit");
     panel.button(&mut e, Button::Arrow(Pair::Instrument, Dir::Right));
-    assert_eq!(e.part_view(DRUM_PART).instrument, 8, "Room is the next set");
+    assert_eq!(e.part_view(DRUM_PART).instrument, next);
+}
+
+/// A sparse font cycles through the programs it loaded and skips the
+/// numbers between; a full circuit returns home. The drum bank is
+/// sparse by nature, so it is the natural place to prove it.
+#[test]
+fn cycling_walks_the_fonts_own_list() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    let start = e.part_view(DRUM_PART).instrument;
+    let mut seen = vec![start];
+    let mut at = start;
+    for _ in 0..129 {
+        at = e.neighbour_instrument(DRUM_PART, 1).expect("kits exist");
+        e.set_part_instrument(DRUM_PART, at);
+        if at == start {
+            break;
+        }
+        assert!(!seen.contains(&at), "a circuit never repeats mid-way");
+        seen.push(at);
+    }
+    assert_eq!(at, start, "the circuit comes home");
+    assert!(seen.len() > 1, "and visited the font's other kits");
 }
 
 /// Value arrows edit the selected part in the synthesizer itself; a
