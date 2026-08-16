@@ -6,7 +6,7 @@ edition = "2021"
 
 description = "Coppersynth's derivative of RustySynth: SF2 modulators, introspection, tolerant loading"
 readme = "README.md"
-repository = "https://github.com/CopperlineHQ/coppersynth"
+repository = "https://github.com/CopperlineHQ/Coppersynth"
 license = "MIT"
 publish = false
 keywords = ["soundfont", "midi", "synthesizer", "audio", "music"]
