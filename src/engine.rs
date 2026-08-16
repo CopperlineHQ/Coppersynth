@@ -142,7 +142,7 @@ impl Parts {
     }
 }
 
-pub struct GmEngine {
+pub struct Engine {
     synth: Synthesizer,
     translator: Mt32Translator,
     parts: Parts,
@@ -187,7 +187,7 @@ pub struct GmEngine {
     demo: Option<Demo>,
 }
 
-impl GmEngine {
+impl Engine {
     /// Open a soundfont and build the engine at `sample_rate`.
     pub fn open(soundfont: &Path, sample_rate: u32, mode: Mt32Mode) -> Result<Self, String> {
         let mut file =

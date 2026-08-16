@@ -3,24 +3,24 @@
 //! shows. Every test skips quietly without the local soundfont, like
 //! the listening rig.
 
-use coppersynth::engine::{GmEngine, DRUM_PART, PARTS};
+use coppersynth::engine::{Engine, DRUM_PART, PARTS};
 use coppersynth::mt32::translator::Mt32Mode;
 
-fn engine(mode: Mt32Mode) -> Option<GmEngine> {
+fn engine(mode: Mt32Mode) -> Option<Engine> {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../assets/GeneralUser-GS.sf2");
     if !std::path::Path::new(path).is_file() {
         return None;
     }
-    Some(GmEngine::open(std::path::Path::new(path), 44_100, mode).expect("engine opens"))
+    Some(Engine::open(std::path::Path::new(path), 44_100, mode).expect("engine opens"))
 }
 
-fn send(engine: &mut GmEngine, bytes: &[u8]) {
+fn send(engine: &mut Engine, bytes: &[u8]) {
     for &b in bytes {
         engine.write_byte(b);
     }
 }
 
-fn render_rms(engine: &mut GmEngine, frames: usize) -> f32 {
+fn render_rms(engine: &mut Engine, frames: usize) -> f32 {
     let mut block = vec![(0f32, 0f32); frames];
     engine.render(&mut block);
     (block.iter().map(|(l, r)| l * l + r * r).sum::<f32>() / frames as f32).sqrt()
@@ -347,7 +347,7 @@ fn reverb_and_chorus_are_audible() {
 /// this working.
 #[test]
 fn the_bundled_bank_needs_no_files() {
-    let mut e = GmEngine::open_bundled(44_100, Mt32Mode::Off).expect("the bundle opens");
+    let mut e = Engine::open_bundled(44_100, Mt32Mode::Off).expect("the bundle opens");
     assert!(
         e.bank_name().starts_with("GeneralUser"),
         "the bank names itself: {:?}",

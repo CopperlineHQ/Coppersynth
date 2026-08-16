@@ -3,24 +3,24 @@
 //! screen here is deterministic. Skips quietly without the local
 //! soundfont.
 
-use coppersynth::engine::{GmEngine, Monitor, Mt32Mode, DRUM_PART};
+use coppersynth::engine::{Engine, Monitor, Mt32Mode, DRUM_PART};
 use coppersynth::panel::{Button, Dir, FrontPanel, Pair, PanelRequest};
 
-fn engine(mode: Mt32Mode) -> Option<GmEngine> {
+fn engine(mode: Mt32Mode) -> Option<Engine> {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../assets/GeneralUser-GS.sf2");
     if !std::path::Path::new(path).is_file() {
         return None;
     }
-    Some(GmEngine::open(std::path::Path::new(path), 44_100, mode).expect("engine opens"))
+    Some(Engine::open(std::path::Path::new(path), 44_100, mode).expect("engine opens"))
 }
 
 /// Draw once at zero to start the boot line, then step past it.
-fn settled(panel: &mut FrontPanel, engine: &mut GmEngine) {
+fn settled(panel: &mut FrontPanel, engine: &mut Engine) {
     panel.screen(engine, 0);
     panel.screen(engine, 3_100);
 }
 
-fn send(engine: &mut GmEngine, bytes: &[u8]) {
+fn send(engine: &mut Engine, bytes: &[u8]) {
     for &b in bytes {
         engine.write_byte(b);
     }
