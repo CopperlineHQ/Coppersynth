@@ -286,6 +286,20 @@ fn panel_edits_hold_against_the_wire() {
     assert_eq!(e.part_view(0).instrument, 7);
 }
 
+/// A slot the font never filled keeps its number and reads Empty --
+/// the numbering must never shift on a sparse font.
+#[test]
+fn empty_slots_keep_their_numbers() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    // GeneralUser's drum bank is sparse: program 3 is not a kit.
+    e.set_part_instrument(DRUM_PART, 3);
+    let view = e.part_view(DRUM_PART);
+    assert_eq!(view.instrument, 3, "the number is the slot asked for");
+    assert_eq!(view.name, "Empty", "and the hole says what it is");
+}
+
 /// The effects respond across their whole range: 0 is dry, 127 is
 /// unmistakably wet, and the GM default sits between. A woodblock is
 /// over in an instant, so everything after the hit is the room.
