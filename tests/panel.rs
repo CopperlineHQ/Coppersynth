@@ -195,8 +195,11 @@ fn all_mode_broadcasts_to_every_part() {
     // One part out of step and the read-out shrugs.
     e.set_part_reverb(2, 90);
     assert_eq!(panel.screen(&mut e, 4_000).reverb, "---");
+    // The MIDI CH pair sits inert in ALL mode: no channel speaks for
+    // sixteen parts, and the read-out says so with dashes.
     panel.button(&mut e, Button::Arrow(Pair::MidiCh, Dir::Left));
-    assert_eq!(e.device_id(), 16);
+    assert_eq!(e.device_id(), 16, "the device ID is not a fascia setting");
+    assert_eq!(panel.screen(&mut e, 4_000).midi_ch, "---");
 }
 
 /// MUTE gates the shown part and the screen says so; in ALL mode it

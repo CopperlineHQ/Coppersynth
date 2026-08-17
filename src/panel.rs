@@ -596,12 +596,10 @@ impl FrontPanel {
                         engine.set_part_key_shift(p, v as i8);
                     }
                 }
-                Pair::MidiCh => {
-                    // The one master left on this pair: the device ID.
-                    let v = (engine.device_id() as i32 + step(0)).clamp(1, 32);
-                    engine.set_device_id(v as u8);
-                }
-                Pair::Part | Pair::Instrument => {}
+                // A receive channel is each part's own; there is no
+                // "every part at once" to step, so the pair sits inert
+                // with its value dashed.
+                Pair::Part | Pair::Instrument | Pair::MidiCh => {}
             }
             return;
         }
@@ -693,7 +691,8 @@ impl FrontPanel {
                 reverb: show(PartSetting::Reverb, |v| v.to_string()),
                 chorus: show(PartSetting::Chorus, |v| v.to_string()),
                 key_shift: show(PartSetting::KeyShift, |v| shift_label(v as i8)),
-                midi_ch: engine.device_id().to_string(),
+                // No single channel speaks for sixteen parts.
+                midi_ch: "---".to_string(),
                 bars,
                 all_led: true,
                 mute_led: (0..PARTS).all(|p| engine.part_muted(p)),
