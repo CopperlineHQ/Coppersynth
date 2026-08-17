@@ -657,7 +657,9 @@ impl FrontPanel {
             key_shift: shift_label(view.key_shift),
             midi_ch: match view.rx_channel {
                 Some(c) => format!("{:02}", c + 1),
-                None => "Off".to_string(),
+                // A part receiving nothing shows an empty channel, the
+                // way every other empty value on the glass reads.
+                None => "---".to_string(),
             },
             bars,
             all_led: false,
