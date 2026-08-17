@@ -246,7 +246,7 @@ fn monitor_solos_the_shown_part() {
     assert_eq!(e.monitor(), Monitor::Off);
 }
 
-/// INSTRUMENT ► held through the power-on asks the MT-32 question,
+/// INSTRUMENT ◄ held through the power-on asks the MT-32 question,
 /// lamps flashing; ALL answers yes and the choice reaches the host.
 #[test]
 fn the_mt32_prompt_enables_translation() {
@@ -254,9 +254,9 @@ fn the_mt32_prompt_enables_translation() {
         return;
     };
     let mut panel = FrontPanel::default();
-    panel.power_on_held(&[Button::Arrow(Pair::Instrument, Dir::Right)]);
+    panel.power_on_held(&[Button::Arrow(Pair::Instrument, Dir::Left)]);
     let prompt = panel.screen(&mut e, 0);
-    assert_eq!(prompt.name, "MT-32, Sure?");
+    assert_eq!(prompt.name, "Init MT-32, Sure?");
     assert!(prompt.all_led, "the lamps flash on this half-second");
     assert!(prompt.mute_led);
     let off_beat = panel.screen(&mut e, 500);
@@ -276,7 +276,7 @@ fn the_mt32_prompt_disables_translation() {
         return;
     };
     let mut panel = FrontPanel::default();
-    panel.power_on_held(&[Button::Arrow(Pair::Instrument, Dir::Right)]);
+    panel.power_on_held(&[Button::Arrow(Pair::Instrument, Dir::Left)]);
     panel.screen(&mut e, 0);
     let request = panel.button(&mut e, Button::Mute);
     assert_eq!(request, Some(PanelRequest::Mt32Mode(Mt32Mode::Off)));
@@ -286,51 +286,82 @@ fn the_mt32_prompt_disables_translation() {
     assert!(!e.translating());
 }
 
-/// The undocumented screen, straight from the library, with the boot
-/// line stood down for it.
+/// Both MIDI CH halves and both INSTRUMENT halves: the version rides
+/// the second line as documented -- and the credits roll over it,
+/// lamps flashing, until ALL or MUTE lets the unit boot.
 #[test]
-fn the_version_combo_says_hobbo() {
-    let Some(mut e) = engine(Mt32Mode::Off) else {
-        return;
-    };
-    let mut panel = FrontPanel::default();
-    panel.power_on_held(&[Button::All, Button::Mute]);
-    let screen = panel.screen(&mut e, 0);
-    assert_eq!(
-        screen.name,
-        format!("ver{} hobbo91", env!("CARGO_PKG_VERSION"))
-    );
-    panel.button(&mut e, Button::Mute);
-    assert_eq!(panel.screen(&mut e, 100).part, "01", "any press leaves");
-}
-
-/// Both MIDI CH halves and both INSTRUMENT halves: the unit says its
-/// own name and version, then boots as normal.
-#[test]
-fn the_splash_egg_boots_verbose() {
+fn the_debug_print_rolls_its_credits() {
     let Some(mut e) = engine(Mt32Mode::Off) else {
         return;
     };
     let mut panel = FrontPanel::default();
     panel.power_on_held(&[Button::Both(Pair::MidiCh), Button::Both(Pair::Instrument)]);
-    let splash = panel.screen(&mut e, 0);
+    let screen = panel.screen(&mut e, 0);
     let date = env!("COPPERSYNTH_RELEASE_DATE");
     let expect = if date.is_empty() {
         format!("v{}", env!("CARGO_PKG_VERSION"))
     } else {
         format!("v{} {date}", env!("CARGO_PKG_VERSION"))
     };
-    assert_eq!(splash.name, "COPPERSYNTH");
-    assert_eq!(splash.subtitle, expect, "the version rides under it");
-    assert_eq!(splash.part, "---");
-    // Three seconds of splash standing in for the greeting, then the
-    // bank introduces itself as on any boot.
-    assert_eq!(panel.screen(&mut e, 2_900).subtitle, expect);
+    assert_eq!(screen.name, "COPPERSYNTH made wit", "the roll at its head");
+    assert_eq!(screen.subtitle, expect, "the version rides under it");
+    assert_eq!(screen.part, "---");
+    assert!(screen.all_led && screen.mute_led, "the lamps flash on");
+    assert!(!panel.screen(&mut e, 500).all_led, "and off");
+    // Once the head has rested, the roll walks a column at a time.
+    assert_eq!(panel.screen(&mut e, 1_000).name, "OPPERSYNTH made with");
+    // A value button is not a dismissal.
+    panel.button(&mut e, Button::Arrow(Pair::Level, Dir::Right));
+    assert_eq!(panel.screen(&mut e, 1_050).subtitle, expect);
+    // ALL lets the boot go on: the greeting, the bank, then home.
+    panel.button(&mut e, Button::All);
+    assert_eq!(panel.screen(&mut e, 2_000).name, "COPPERSYNTH");
     let bank: String = e.bank_name().chars().take(20).collect();
-    let after = panel.screen(&mut e, 3_200);
-    assert_eq!(after.name, bank);
-    assert_eq!(after.subtitle, "");
-    assert_eq!(panel.screen(&mut e, 4_700).part, "01");
+    assert_eq!(panel.screen(&mut e, 3_600).name, bank);
+    assert_eq!(panel.screen(&mut e, 5_100).part, "01");
+}
+
+/// INSTRUMENT ► held through the power-on asks the factory question:
+/// ALL initialises -- the reset request reaches the host, the screen
+/// holds a second -- and the unit boots as on any morning.
+#[test]
+fn the_font_prompt_initialises_after_a_pause() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    let mut panel = FrontPanel::default();
+    panel.power_on_held(&[Button::Arrow(Pair::Instrument, Dir::Right)]);
+    let prompt = panel.screen(&mut e, 0);
+    assert_eq!(prompt.name, "Init SoundFont,Sure?");
+    assert!(prompt.all_led && prompt.mute_led, "the lamps flash on");
+    assert!(!panel.screen(&mut e, 500).all_led, "and off");
+    let request = panel.button(&mut e, Button::All);
+    assert_eq!(request, Some(PanelRequest::ResetSoundfont));
+    let held = panel.screen(&mut e, 1_000);
+    assert_eq!(held.name, "Initializing...");
+    assert_eq!(held.part, "---");
+    // Buttons wait while it says so.
+    assert_eq!(panel.button(&mut e, Button::Mute), None);
+    assert_eq!(panel.screen(&mut e, 1_900).name, "Initializing...");
+    // Its second served, the ordinary boot runs.
+    assert_eq!(panel.screen(&mut e, 2_100).name, "COPPERSYNTH");
+    let bank: String = e.bank_name().chars().take(20).collect();
+    assert_eq!(panel.screen(&mut e, 3_700).name, bank);
+    assert_eq!(panel.screen(&mut e, 5_200).part, "01");
+}
+
+/// MUTE declines the factory question: no request, the loaded bank
+/// stays, and the unit goes straight home.
+#[test]
+fn the_font_prompt_declines_quietly() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    let mut panel = FrontPanel::default();
+    panel.power_on_held(&[Button::Arrow(Pair::Instrument, Dir::Right)]);
+    panel.screen(&mut e, 0);
+    assert_eq!(panel.button(&mut e, Button::Mute), None);
+    assert_eq!(panel.screen(&mut e, 100).part, "01");
 }
 
 /// A game's letter takes the line and stays until a button sends it

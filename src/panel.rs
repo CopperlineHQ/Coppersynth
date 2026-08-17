@@ -92,6 +92,9 @@ pub enum PanelRequest {
     /// MT-32 mode was switched at the fascia; the host should carry the
     /// choice into its own options so a power cycle keeps it.
     Mt32Mode(Mt32Mode),
+    /// A factory reset was confirmed at the fascia: the host owns the
+    /// bank files, so the host puts the built-in one back.
+    ResetSoundfont,
 }
 
 /// What the panel is showing over the home screen, if anything.
@@ -100,10 +103,17 @@ enum Mode {
     Home,
     /// A pair held together: its values across the parts, as bars.
     View(Pair),
-    /// "MT-32, Sure?" -- ALL turns it on, MUTE turns it off.
+    /// "Init MT-32, Sure?" -- ALL turns it on, MUTE turns it off.
     ConfirmMt32,
-    /// The undocumented screen. Any press leaves it.
-    Version,
+    /// "Init SoundFont,Sure?" -- ALL puts the built-in bank back,
+    /// MUTE carries on with the one loaded.
+    ConfirmFont,
+    /// The second after a factory reset was confirmed: the host is
+    /// putting the built-in bank back, and every button waits.
+    Initializing,
+    /// The undocumented screen: the credits roll until ALL or MUTE
+    /// lets the boot carry on.
+    Credits,
     /// The unit playing to itself: ALL plays, MUTE stops, PART picks
     /// the song. Reached with both PART halves held through power-on.
     Demo {
@@ -125,11 +135,19 @@ enum Message {
     Notice { text: String, started: Option<u64> },
 }
 
-/// The boot line: an optional version splash, the greeting, then the
-/// soundfont introducing itself by its own name.
-const SPLASH_MS: u64 = 3000;
+/// The boot line: the greeting, then the soundfont introducing itself
+/// by its own name.
 const GREETING_MS: u64 = 1500;
 const BANK_MS: u64 = 1500;
+/// How long the unit says Initializing... while a confirmed factory
+/// reset puts the built-in bank back.
+const INIT_MS: u64 = 1000;
+/// What the credits boot scrolls across the name line.
+const CREDITS: &str = "COPPERSYNTH made with love by hobbo91. \
+This work stands on the foundation of RustySynth and MeltySynth by \
+Nobuaki Tanaka. The GeneralUser GS SoundFont by S. Christian Collins. \
+The MT-32 translation layer is thanks to the ScummVM project. \
+Thank you for using Coppersynth :)";
 /// How long a notice stays up.
 const NOTICE_MS: u64 = 2000;
 /// A long letter rests, steps a column at a time, rests on its tail,
@@ -167,10 +185,12 @@ pub struct FrontPanel {
     all: bool,
     part: usize,
     mode: Mode,
-    /// Whether the boot line opens with the version splash.
-    splash: bool,
     boot_started: Option<u64>,
     boot_done: bool,
+    /// When the Initializing... screen went up.
+    init_started: Option<u64>,
+    /// When the credits started rolling, for their scroll clock.
+    credits_started: Option<u64>,
     message: Option<Message>,
     picture: Option<([u16; PARTS], Option<u64>)>,
     /// When the playing demo song ran out, while the gap rests.
@@ -187,9 +207,10 @@ impl Default for FrontPanel {
             all: false,
             part: 0,
             mode: Mode::Home,
-            splash: false,
             boot_started: None,
             boot_done: false,
+            init_started: None,
+            credits_started: None,
             message: None,
             picture: None,
             demo_ended: None,
@@ -202,9 +223,7 @@ impl Default for FrontPanel {
 
 impl FrontPanel {
     /// The buttons held while the power came on, read the way the unit
-    /// reads its own fascia at start-up. (Both INSTRUMENT halves alone
-    /// are the host's: they put the default soundfont back before the
-    /// unit even exists.)
+    /// reads its own fascia at start-up.
     pub fn power_on_held(&mut self, held: &[Button]) {
         let is =
             |want: &[Button]| held.len() == want.len() && want.iter().all(|b| held.contains(b));
@@ -217,29 +236,55 @@ impl FrontPanel {
                 playing: false,
             };
             self.boot_done = true;
-        } else if is(&[Button::Arrow(Pair::Instrument, Dir::Right)]) {
+        } else if is(&[Button::Arrow(Pair::Instrument, Dir::Left)]) {
             // A unit switched on into a service screen skips its boot
             // line; the question is the greeting.
             self.mode = Mode::ConfirmMt32;
             self.boot_done = true;
-        } else if is(&[Button::All, Button::Mute]) {
-            // Undocumented, as the tradition demands.
-            self.mode = Mode::Version;
+        } else if is(&[Button::Arrow(Pair::Instrument, Dir::Right)]) {
+            // The other half of the pair asks the factory question.
+            self.mode = Mode::ConfirmFont;
             self.boot_done = true;
         } else if is(&[Button::Both(Pair::MidiCh), Button::Both(Pair::Instrument)]) {
-            // Undocumented too: the unit says its own name and version,
-            // then boots as normal.
-            self.splash = true;
+            // Undocumented, as the tradition demands: the credits roll
+            // until ALL or MUTE lets the boot go on.
+            self.mode = Mode::Credits;
+            self.boot_done = true;
         }
     }
 
     /// A press. Anything the panel cannot mirror alone comes back as a
     /// request for the host.
     pub fn button(&mut self, engine: &mut Engine, b: Button) -> Option<PanelRequest> {
-        // The version screen leaves on any press, saying nothing.
-        if self.mode == Mode::Version {
-            self.mode = Mode::Home;
+        // The credits hold the glass until ALL or MUTE lets the boot
+        // carry on; every other button stays quiet.
+        if self.mode == Mode::Credits {
+            if matches!(b, Button::All | Button::Mute) {
+                self.mode = Mode::Home;
+                self.credits_started = None;
+                self.boot_done = false;
+                self.boot_started = None;
+            }
             return None;
+        }
+        // While the unit says Initializing..., it means it.
+        if self.mode == Mode::Initializing {
+            return None;
+        }
+        // The factory prompt: ALL initialises (the host swaps the bank
+        // while the screen holds), MUTE carries on with the one loaded.
+        if self.mode == Mode::ConfirmFont {
+            return match b {
+                Button::All => {
+                    self.mode = Mode::Initializing;
+                    Some(PanelRequest::ResetSoundfont)
+                }
+                Button::Mute => {
+                    self.mode = Mode::Home;
+                    None
+                }
+                _ => None,
+            };
         }
         // The MT-32 prompt takes ALL as on and MUTE as off, and ignores
         // the rest.
@@ -348,6 +393,18 @@ impl FrontPanel {
 
     /// Compose the glass.
     pub fn screen(&mut self, engine: &mut Engine, now_ms: u64) -> Screen {
+        // The Initializing... hold, once it has had its second, lets
+        // the unit boot as on any morning -- onto the built-in bank
+        // the host has just put back.
+        if self.mode == Mode::Initializing {
+            let since = *self.init_started.get_or_insert(now_ms);
+            if now_ms.saturating_sub(since) >= INIT_MS {
+                self.mode = Mode::Home;
+                self.init_started = None;
+                self.boot_done = false;
+                self.boot_started = None;
+            }
+        }
         let bars = self.compose_bars(engine, now_ms);
         let mut screen = self.home_screen(engine, bars);
         if let Some((line, subtitle)) = self.boot_line(engine, now_ms) {
@@ -360,17 +417,38 @@ impl FrontPanel {
             return finished(screen);
         }
         match self.mode {
-            Mode::Version => {
+            Mode::ConfirmMt32 | Mode::ConfirmFont => {
                 screen.part = String::new();
                 screen.instrument = String::new();
-                screen.name = format!("ver{} hobbo91", env!("CARGO_PKG_VERSION"));
-            }
-            Mode::ConfirmMt32 => {
-                screen.part = String::new();
-                screen.instrument = String::new();
-                screen.name = "MT-32, Sure?".to_string();
+                screen.name = if self.mode == Mode::ConfirmMt32 {
+                    "Init MT-32, Sure?".to_string()
+                } else {
+                    "Init SoundFont,Sure?".to_string()
+                };
                 // ALL says yes and MUTE says no; their lamps flash to
                 // say the question is theirs.
+                let flash_on = (now_ms / FLASH_MS).is_multiple_of(2);
+                screen.all_led = flash_on;
+                screen.mute_led = flash_on;
+            }
+            Mode::Initializing => {
+                screen.part = String::new();
+                screen.instrument = String::new();
+                screen.name = "Initializing...".to_string();
+                dash_values(&mut screen);
+            }
+            Mode::Credits => {
+                screen.part = String::new();
+                screen.instrument = String::new();
+                let since = *self.credits_started.get_or_insert(now_ms);
+                let text: Vec<char> = CREDITS.chars().collect();
+                screen.name = scroll_line(&text, since, now_ms);
+                // The version and date ride under the roll, exactly as
+                // the documented print reads.
+                screen.subtitle = version_line();
+                dash_values(&mut screen);
+                // ALL or MUTE lets the boot go on; their lamps flash
+                // to say so.
                 let flash_on = (now_ms / FLASH_MS).is_multiple_of(2);
                 screen.all_led = flash_on;
                 screen.mute_led = flash_on;
@@ -411,8 +489,7 @@ impl FrontPanel {
         finished(screen)
     }
 
-    /// The boot line while it runs -- the greeting (wearing the version
-    /// and date under it when the splash was asked for), then the
+    /// The boot line while it runs -- the greeting, then the
     /// soundfont's own name.
     fn boot_line(&mut self, engine: &Engine, now_ms: u64) -> Option<(String, String)> {
         if self.boot_done {
@@ -420,25 +497,10 @@ impl FrontPanel {
         }
         let started = *self.boot_started.get_or_insert(now_ms);
         let mut elapsed = now_ms.saturating_sub(started);
-        if self.splash {
-            if elapsed < SPLASH_MS {
-                // The version, and the day its commit was made, stamped
-                // at build time.
-                let date = env!("COPPERSYNTH_RELEASE_DATE");
-                let line2 = if date.is_empty() {
-                    format!("v{}", env!("CARGO_PKG_VERSION"))
-                } else {
-                    format!("v{} {date}", env!("CARGO_PKG_VERSION"))
-                };
-                return Some(("COPPERSYNTH".to_string(), line2));
-            }
-            elapsed -= SPLASH_MS;
-        } else {
-            if elapsed < GREETING_MS {
-                return Some(("COPPERSYNTH".to_string(), String::new()));
-            }
-            elapsed -= GREETING_MS;
+        if elapsed < GREETING_MS {
+            return Some(("COPPERSYNTH".to_string(), String::new()));
         }
+        elapsed -= GREETING_MS;
         if elapsed < BANK_MS {
             let bank: String = engine.bank_name().chars().take(NAME_COLS).collect();
             if !bank.is_empty() {
@@ -767,27 +829,41 @@ impl FrontPanel {
             }
             Message::Letter { text, started } => {
                 let since = *started.get_or_insert(now_ms);
-                let len = text.len();
-                if len <= NAME_COLS {
-                    return Some(text.iter().collect());
-                }
-                // Round and round: rest at the head, step through,
-                // rest on the tail, and begin again.
-                let steps = (len - NAME_COLS) as u64;
-                let cycle = SCROLL_START_MS + steps * SCROLL_STEP_MS + SCROLL_TAIL_MS;
-                let at = now_ms.saturating_sub(since) % cycle;
-                let offset = if at < SCROLL_START_MS {
-                    0
-                } else {
-                    ((at - SCROLL_START_MS) / SCROLL_STEP_MS).min(steps)
-                };
-                Some(
-                    text[offset as usize..offset as usize + NAME_COLS]
-                        .iter()
-                        .collect(),
-                )
+                Some(scroll_line(text, since, now_ms))
             }
         }
+    }
+}
+
+/// The visible window of a line, scrolling when it is long. Round and
+/// round: rest at the head, step through, rest on the tail, and begin
+/// again.
+fn scroll_line(text: &[char], since: u64, now_ms: u64) -> String {
+    let len = text.len();
+    if len <= NAME_COLS {
+        return text.iter().collect();
+    }
+    let steps = (len - NAME_COLS) as u64;
+    let cycle = SCROLL_START_MS + steps * SCROLL_STEP_MS + SCROLL_TAIL_MS;
+    let at = now_ms.saturating_sub(since) % cycle;
+    let offset = if at < SCROLL_START_MS {
+        0
+    } else {
+        ((at - SCROLL_START_MS) / SCROLL_STEP_MS).min(steps)
+    };
+    text[offset as usize..offset as usize + NAME_COLS]
+        .iter()
+        .collect()
+}
+
+/// The version, and the day its commit was made, stamped at build
+/// time.
+fn version_line() -> String {
+    let date = env!("COPPERSYNTH_RELEASE_DATE");
+    if date.is_empty() {
+        format!("v{}", env!("CARGO_PKG_VERSION"))
+    } else {
+        format!("v{} {date}", env!("CARGO_PKG_VERSION"))
     }
 }
 
