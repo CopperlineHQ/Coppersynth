@@ -253,6 +253,16 @@ impl FrontPanel {
         }
     }
 
+    /// Put the panel into the Initializing... hold, for a host whose
+    /// bank swap rebuilds the unit around the new font: the freshly
+    /// attached panel shows the hold's second, then the ordinary boot
+    /// runs -- exactly as if it had survived the swap.
+    pub fn begin_initializing(&mut self) {
+        self.mode = Mode::Initializing;
+        self.boot_done = true;
+        self.init_started = None;
+    }
+
     /// A press. Anything the panel cannot mirror alone comes back as a
     /// request for the host.
     pub fn button(&mut self, engine: &mut Engine, b: Button) -> Option<PanelRequest> {

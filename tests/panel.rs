@@ -353,6 +353,20 @@ fn the_font_prompt_initialises_after_a_pause() {
     assert_eq!(panel.screen(&mut e, 5_200).part, "01");
 }
 
+/// A panel born mid-reset (the host rebuilds the unit around the new
+/// bank) holds Initializing... for its second, then boots.
+#[test]
+fn a_rebuilt_panel_can_open_on_the_initializing_hold() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    let mut panel = FrontPanel::default();
+    panel.begin_initializing();
+    assert_eq!(panel.screen(&mut e, 0).name, "Initializing...");
+    assert_eq!(panel.screen(&mut e, 900).name, "Initializing...");
+    assert_eq!(panel.screen(&mut e, 1_100).name, "COPPERSYNTH");
+}
+
 /// MUTE declines the factory question: no request, the loaded bank
 /// stays, and the unit goes straight home.
 #[test]
