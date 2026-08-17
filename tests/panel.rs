@@ -163,7 +163,7 @@ fn value_arrows_edit_and_hold() {
     for _ in 0..15 {
         panel.button(&mut e, Button::Arrow(Pair::MidiCh, Dir::Right));
     }
-    assert_eq!(panel.screen(&mut e, 4_000).midi_ch, "Off");
+    assert_eq!(panel.screen(&mut e, 4_000).midi_ch, "---");
     panel.button(&mut e, Button::Arrow(Pair::MidiCh, Dir::Right));
     assert_eq!(panel.screen(&mut e, 4_000).midi_ch, "01");
 }
