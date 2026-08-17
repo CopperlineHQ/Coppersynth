@@ -143,7 +143,7 @@ const BANK_MS: u64 = 1500;
 /// reset puts the built-in bank back.
 const INIT_MS: u64 = 1000;
 /// What the credits boot scrolls across the name line.
-const CREDITS: &str = "COPPERSYNTH made with love by hobbo91. \
+const CREDITS: &str = "COPPERSYNTH made with love by Lee Hobson (hobbo91). \
 This work stands on the foundation of RustySynth and MeltySynth by \
 Nobuaki Tanaka. The GeneralUser GS SoundFont by S. Christian Collins. \
 The MT-32 translation layer is thanks to the ScummVM project. \
