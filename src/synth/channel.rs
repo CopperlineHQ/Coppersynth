@@ -45,6 +45,25 @@ pub(crate) struct Channel {
     chorus_send: u8,
 
     rpn: i16,
+    nrpn: i16,
+    /// The GS tone-modify offsets, -50..+50 about zero, applied to the
+    /// notes that start after them (program changes and CC121 leave
+    /// them standing, as the manual specifies).
+    vib_rate_off: i32,
+    vib_depth_off: i32,
+    vib_delay_off: i32,
+    cutoff_off: i32,
+    resonance_off: i32,
+    eg_attack_off: i32,
+    eg_decay_off: i32,
+    eg_release_off: i32,
+    /// The drum-instrument overrides, keyed by note; only a percussion
+    /// part routes anything into them.
+    drum_pitch: [i8; 128],
+    drum_level: [Option<u8>; 128],
+    drum_pan: [Option<u8>; 128],
+    drum_reverb: [Option<u8>; 128],
+    drum_chorus: [Option<u8>; 128],
     pitch_bend_range: i16,
     coarse_tune: i16,
     fine_tune: i16,
@@ -84,6 +103,20 @@ impl Channel {
             reverb_send: 0,
             chorus_send: 0,
             rpn: 0,
+            nrpn: 0,
+            vib_rate_off: 0,
+            vib_depth_off: 0,
+            vib_delay_off: 0,
+            cutoff_off: 0,
+            resonance_off: 0,
+            eg_attack_off: 0,
+            eg_decay_off: 0,
+            eg_release_off: 0,
+            drum_pitch: [0; 128],
+            drum_level: [None; 128],
+            drum_pan: [None; 128],
+            drum_reverb: [None; 128],
+            drum_chorus: [None; 128],
             pitch_bend_range: 0,
             coarse_tune: 0,
             fine_tune: 0,
@@ -121,6 +154,20 @@ impl Channel {
         self.chorus_send = 0;
 
         self.rpn = -1;
+        self.nrpn = -1;
+        self.vib_rate_off = 0;
+        self.vib_depth_off = 0;
+        self.vib_delay_off = 0;
+        self.cutoff_off = 0;
+        self.resonance_off = 0;
+        self.eg_attack_off = 0;
+        self.eg_decay_off = 0;
+        self.eg_release_off = 0;
+        self.drum_pitch = [0; 128];
+        self.drum_level = [None; 128];
+        self.drum_pan = [None; 128];
+        self.drum_reverb = [None; 128];
+        self.drum_chorus = [None; 128];
         self.pitch_bend_range = 2 << 7;
         self.coarse_tune = 0;
         self.fine_tune = 8192;
@@ -302,15 +349,167 @@ impl Channel {
         self.last_data_type = DataType::Rpn;
     }
 
-    pub(crate) fn set_nrpn_coarse(&mut self, _value: i32) {
+    pub(crate) fn set_nrpn_coarse(&mut self, value: i32) {
+        self.nrpn = (self.nrpn & 0x7F) | (value << 7) as i16;
         self.last_data_type = DataType::Nrpn;
     }
 
-    pub(crate) fn set_nrpn_fine(&mut self, _value: i32) {
+    pub(crate) fn set_nrpn_fine(&mut self, value: i32) {
+        self.nrpn = (((self.nrpn as i32) & 0xFF80) | value) as i16;
         self.last_data_type = DataType::Nrpn;
+    }
+
+    /// The GS NRPN set, routed on the data-entry MSB (the LSB is
+    /// ignored, as the unit ignores it). Tone modifies are relative,
+    /// -50..+50 about 40H; the drum set is per-note, absolute except
+    /// the relative pitch. Program changes and CC121 leave these
+    /// standing; only a reset clears them.
+    fn nrpn_data_entry(&mut self, value: i32) {
+        let msb = (self.nrpn >> 7) & 0x7F;
+        let lsb = self.nrpn & 0x7F;
+        let relative = (value - 64).clamp(-50, 50);
+        match (msb, lsb) {
+            (0x01, 0x08) => self.vib_rate_off = relative,
+            (0x01, 0x09) => self.vib_depth_off = relative,
+            (0x01, 0x0A) => self.vib_delay_off = relative,
+            (0x01, 0x20) => self.cutoff_off = relative,
+            (0x01, 0x21) => self.resonance_off = relative,
+            (0x01, 0x63) => self.eg_attack_off = relative,
+            (0x01, 0x64) => self.eg_decay_off = relative,
+            (0x01, 0x66) => self.eg_release_off = relative,
+            (0x18, key) if self.is_percussion_channel => {
+                self.drum_pitch[key as usize] = (value - 64).clamp(-64, 63) as i8;
+            }
+            (0x1A, key) if self.is_percussion_channel => {
+                self.drum_level[key as usize] = Some(value as u8);
+            }
+            (0x1C, key) if self.is_percussion_channel => {
+                self.drum_pan[key as usize] = Some(value as u8);
+            }
+            (0x1D, key) if self.is_percussion_channel => {
+                self.drum_reverb[key as usize] = Some(value as u8);
+            }
+            (0x1E, key) if self.is_percussion_channel => {
+                self.drum_chorus[key as usize] = Some(value as u8);
+            }
+            _ => {}
+        }
+    }
+
+    /// Vibrato rate as a frequency factor (about +/-4x at the ends).
+    pub(crate) fn nrpn_vib_rate_factor(&self) -> f32 {
+        (2_f32).powf(self.vib_rate_off as f32 / 25.0)
+    }
+
+    /// Extra vibrato depth in cents.
+    pub(crate) fn nrpn_vib_depth_cents(&self) -> f32 {
+        self.vib_depth_off as f32 * 6.0
+    }
+
+    /// Vibrato delay as a duration factor (positive waits longer).
+    pub(crate) fn nrpn_vib_delay_factor(&self) -> f32 {
+        (2_f32).powf(self.vib_delay_off as f32 / 25.0)
+    }
+
+    /// TVF cutoff offset in cents.
+    pub(crate) fn nrpn_cutoff_cents(&self) -> f32 {
+        self.cutoff_off as f32 * 48.0
+    }
+
+    /// TVF resonance offset in centibels.
+    pub(crate) fn nrpn_resonance_cb(&self) -> f32 {
+        self.resonance_off as f32 * 6.0
+    }
+
+    /// Envelope time factors: attack, decay, release (about half to
+    /// double across the range).
+    pub(crate) fn nrpn_eg_factors(&self) -> (f32, f32, f32) {
+        let f = |off: i32| (2_f32).powf(off as f32 / 50.0);
+        (
+            f(self.eg_attack_off),
+            f(self.eg_decay_off),
+            f(self.eg_release_off),
+        )
+    }
+
+    /// A drum note's pitch offset in semitones.
+    pub(crate) fn drum_pitch_semitones(&self, key: i32) -> f32 {
+        if !self.is_percussion_channel {
+            return 0_f32;
+        }
+        self.drum_pitch
+            .get(key as usize)
+            .map(|&p| p as f32)
+            .unwrap_or(0_f32)
+    }
+
+    /// A drum note's TVA level as a gain (GM's squared curve).
+    pub(crate) fn drum_level_gain(&self, key: i32) -> f32 {
+        if !self.is_percussion_channel {
+            return 1_f32;
+        }
+        match self.drum_level.get(key as usize).copied().flatten() {
+            Some(level) => {
+                let v = level as f32 / 127.0;
+                v * v
+            }
+            None => 1_f32,
+        }
+    }
+
+    /// A drum note's pan override in the instrument's -50..+50 units.
+    /// 0 on the wire means random placement; a deterministic scatter
+    /// derived from the note keeps renders reproducible.
+    pub(crate) fn drum_pan_override(&self, key: i32, velocity: i32) -> Option<f32> {
+        if !self.is_percussion_channel {
+            return None;
+        }
+        let raw = self.drum_pan.get(key as usize).copied().flatten()?;
+        if raw == 0 {
+            let hash = (key as u32)
+                .wrapping_mul(2654435761)
+                .wrapping_add(velocity as u32)
+                .wrapping_mul(40503);
+            return Some((hash >> 16) as f32 % 101.0 - 50.0);
+        }
+        Some((raw as f32 - 64.0).clamp(-50.0, 50.0) * (50.0 / 63.0))
+    }
+
+    /// The part reverb send scaled by a drum note's multiplicand.
+    pub(crate) fn get_reverb_send_for(&self, key: i32) -> f32 {
+        let mult = if self.is_percussion_channel {
+            self.drum_reverb
+                .get(key as usize)
+                .copied()
+                .flatten()
+                .map(|v| v as f32 / 127.0)
+                .unwrap_or(1_f32)
+        } else {
+            1_f32
+        };
+        self.get_reverb_send() * mult
+    }
+
+    /// The part chorus send scaled by a drum note's multiplicand.
+    pub(crate) fn get_chorus_send_for(&self, key: i32) -> f32 {
+        let mult = if self.is_percussion_channel {
+            self.drum_chorus
+                .get(key as usize)
+                .copied()
+                .flatten()
+                .map(|v| v as f32 / 127.0)
+                .unwrap_or(1_f32)
+        } else {
+            1_f32
+        };
+        self.get_chorus_send() * mult
     }
 
     pub(crate) fn data_entry_coarse(&mut self, value: i32) {
+        if self.last_data_type == DataType::Nrpn {
+            self.nrpn_data_entry(value);
+            return;
+        }
         if self.last_data_type != DataType::Rpn {
             return;
         }

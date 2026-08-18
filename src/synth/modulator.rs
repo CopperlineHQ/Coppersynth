@@ -196,6 +196,8 @@ pub(crate) fn source_raw(
         general_controller::NONE => 1.0,
         general_controller::NOTE_ON_VELOCITY => velocity as f32 / 127.0,
         general_controller::NOTE_ON_KEY => key as f32 / 127.0,
+        general_controller::POLY_PRESSURE => channel.get_poly_pressure(key) as f32 / 127.0,
+        general_controller::CHANNEL_PRESSURE => channel.get_channel_pressure() as f32 / 127.0,
         general_controller::PITCH_WHEEL => channel.get_pitch_bend_raw(),
         general_controller::PITCH_WHEEL_SENSITIVITY => channel.get_pitch_bend_range() / 127.0,
         _ => 0.0,

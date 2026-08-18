@@ -55,6 +55,7 @@ impl RegionEx {
         region: &RegionPair,
         key: i32,
         _velocity: i32,
+        eg: (f32, f32, f32),
     ) {
         // If the release time is shorter than 10 ms, it will be clamped to 10 ms to avoid pop noise.
 
@@ -73,7 +74,17 @@ impl RegionEx {
         let sustain = SoundFontMath::decibels_to_linear(-region.get_sustain_volume_envelope());
         let release = SoundFontMath::max(region.get_release_volume_envelope(), 0.01_f32);
 
-        envelope.start(delay, attack, hold, decay, sustain, release);
+        // The channel's GS envelope offsets (NRPN 01 63/64/66) scale the
+        // times the bank asked for.
+        let (attack_f, decay_f, release_f) = eg;
+        envelope.start(
+            delay,
+            attack * attack_f,
+            hold,
+            decay * decay_f,
+            sustain,
+            release * release_f,
+        );
     }
 
     pub(crate) fn start_modulation_envelope(
@@ -102,10 +113,19 @@ impl RegionEx {
         envelope.start(delay, attack, hold, decay, sustain, release);
     }
 
-    pub(crate) fn start_vibrato(lfo: &mut Lfo, region: &RegionPair, _key: i32, _velocity: i32) {
+    pub(crate) fn start_vibrato(
+        lfo: &mut Lfo,
+        region: &RegionPair,
+        _key: i32,
+        _velocity: i32,
+        rate_factor: f32,
+        delay_factor: f32,
+    ) {
+        // The channel's GS vibrato offsets (NRPN 01 08/0A) bend the
+        // bank's rate and delay.
         lfo.start(
-            region.get_delay_vibrato_lfo(),
-            region.get_frequency_vibrato_lfo(),
+            region.get_delay_vibrato_lfo() * delay_factor,
+            region.get_frequency_vibrato_lfo() * rate_factor,
         );
     }
 

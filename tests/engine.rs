@@ -663,3 +663,89 @@ fn portamento_control_retunes_legato() {
         "the voice lives under the new key alone (still {still}, gone {gone})"
     );
 }
+
+/// Select an NRPN and send its data-entry MSB.
+fn nrpn(e: &mut Engine, msb: u8, lsb: u8, value: u8) {
+    send(e, &[0xB0, 0x63, msb, 0xB0, 0x62, lsb, 0xB0, 0x06, value]);
+}
+
+/// NRPN 01 20 closes the filter: the note's waveform reshapes against
+/// the untouched render (total loudness barely moves on a low note, so
+/// the difference is the honest meter).
+#[test]
+fn nrpn_cutoff_closes_the_filter() {
+    let run = |cutoff: Option<u8>| -> Option<Vec<(f32, f32)>> {
+        let mut e = engine(Mt32Mode::Off)?;
+        send(&mut e, &[0xC0, 80]);
+        if let Some(v) = cutoff {
+            nrpn(&mut e, 0x01, 0x20, v);
+        }
+        send(&mut e, &[0x90, 60, 110]);
+        let mut out = vec![(0.0f32, 0.0f32); 22_050];
+        e.render(&mut out);
+        Some(out)
+    };
+    let (Some(open), Some(closed)) = (run(None), run(Some(14))) else {
+        return;
+    };
+    let level = rms_of(&open);
+    let reshaped = diff_rms_of(&open, &closed);
+    assert!(
+        reshaped > level * 0.1,
+        "a -50 cutoff must reshape the note (diff {reshaped}, level {level})"
+    );
+}
+
+/// NRPN 1A rr silences one drum instrument and leaves its neighbours.
+#[test]
+fn nrpn_drum_level_is_per_note() {
+    let run = |quiet_snare: bool| -> Option<(f32, f32)> {
+        let mut e = engine(Mt32Mode::Off)?;
+        if quiet_snare {
+            nrpn_ch9(&mut e, 0x1A, 38, 0);
+        }
+        send(&mut e, &[0x99, 38, 120]); // snare
+        let snare = rms_after(&mut e, 11_025);
+        send(&mut e, &[0x99, 42, 120]); // closed hat, untouched
+        let hat = rms_after(&mut e, 11_025);
+        Some((snare, hat))
+    };
+    let (Some((snare, hat)), Some((quiet, hat2))) = (run(false), run(true)) else {
+        return;
+    };
+    assert!(
+        quiet < snare * 0.2,
+        "level 0 silences the snare (was {snare}, now {quiet})"
+    );
+    assert!(
+        hat2 > hat * 0.5,
+        "the hat keeps its voice (was {hat}, now {hat2})"
+    );
+}
+
+fn nrpn_ch9(e: &mut Engine, msb: u8, lsb: u8, value: u8) {
+    send(e, &[0xB9, 0x63, msb, 0xB9, 0x62, lsb, 0xB9, 0x06, value]);
+}
+
+/// NRPN 01 66 stretches and shrinks the release: after the key lifts,
+/// a +50 release rings far longer than a -50 one.
+#[test]
+fn nrpn_release_time_scales_the_tail() {
+    let tail = |release: u8| -> Option<f32> {
+        let mut e = engine(Mt32Mode::Off)?;
+        send(&mut e, &[0xC0, 48]);
+        nrpn(&mut e, 0x01, 0x66, release);
+        send(&mut e, &[0x90, 60, 110]);
+        let _ = rms_after(&mut e, 22_050);
+        send(&mut e, &[0x80, 60, 0]);
+        let _ = rms_after(&mut e, 11_025);
+        Some(rms_after(&mut e, 11_025))
+    };
+    let (Some(short), Some(long)) = (tail(14), tail(114)) else {
+        return;
+    };
+    assert!(
+        long > short * 1.5,
+        "a stretched release rings longer (short {short}, long {long})"
+    );
+}

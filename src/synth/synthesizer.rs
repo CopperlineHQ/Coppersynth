@@ -347,7 +347,13 @@ impl Synthesizer {
                         let region_pair = RegionPair::new(preset_region, instrument_region);
 
                         if let Some(value) = self.voices.request_new(instrument_region, channel) {
-                            value.start(&region_pair, channel, key, velocity);
+                            value.start(
+                                &region_pair,
+                                &self.channels[channel as usize],
+                                channel,
+                                key,
+                                velocity,
+                            );
                             if let Some(src) = glide_source {
                                 value.glide_from(src, decay);
                             }
