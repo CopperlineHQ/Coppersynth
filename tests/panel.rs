@@ -309,6 +309,18 @@ fn the_debug_print_rolls_its_credits() {
         format!("v{} {date}", env!("CARGO_PKG_VERSION"))
     };
     assert_eq!(screen.name, "COPPERSYNTH made wit", "the roll at its head");
+    // The matrix rolls its own wave: columns differ from each other,
+    // and the whole picture moves with time -- no MIDI involved.
+    let bars_now = screen.bars;
+    assert!(
+        bars_now.iter().any(|&b| b != bars_now[0]),
+        "the wave has a shape"
+    );
+    assert_ne!(
+        panel.screen(&mut e, 300).bars,
+        bars_now,
+        "and the shape travels"
+    );
     assert_eq!(screen.subtitle, expect, "the version rides under it");
     assert_eq!(screen.part, "---");
     assert!(screen.all_led && screen.mute_led, "the lamps flash on");
