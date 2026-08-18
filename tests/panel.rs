@@ -633,14 +633,18 @@ fn the_chorus_type_edit_names_types_and_commits() {
     let screen = panel.screen(&mut e, 4_000);
     assert_eq!(screen.name, "Chorus Type: 6");
     assert_eq!(screen.subtitle, "Flanger");
+    // The selection is already sounding for the audition.
+    assert_eq!(e.chorus_type().index(), 6, "cycling activates at once");
     panel.button(&mut e, Button::All);
-    assert_eq!(e.chorus_type().index(), 6, "ALL commits the type");
-    // Cancel keeps what is in force; 0 is Off and stays selectable.
+    assert_eq!(e.chorus_type().index(), 6, "ALL keeps the type");
+    // Cancel puts the original back, even after auditioning another;
+    // 0 is Off and stays selectable.
     panel.button(&mut e, Button::MuteArrow(Pair::Chorus, Dir::Left));
     for _ in 0..6 {
         panel.button(&mut e, Button::Arrow(Pair::Chorus, Dir::Left));
     }
     assert_eq!(panel.screen(&mut e, 4_000).subtitle, "Off");
+    assert_eq!(e.chorus_type().index(), 0, "the audition sounds Off");
     panel.button(&mut e, Button::Mute);
-    assert_eq!(e.chorus_type().index(), 6, "MUTE cancels");
+    assert_eq!(e.chorus_type().index(), 6, "MUTE restores the original");
 }

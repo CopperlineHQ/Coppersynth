@@ -122,10 +122,13 @@ enum Mode {
     EditDeviceId {
         pending: u8,
     },
-    /// "Chorus Type: <n>" -- the CHORUS arrows cycle 0-8, ALL commits,
-    /// MUTE cancels. Reached with MUTE latched and a CHORUS arrow.
+    /// "Chorus Type: <n>" -- the CHORUS arrows cycle 0-8 and each
+    /// selection sounds at once for auditioning; ALL keeps it, MUTE
+    /// puts the original back. Reached with MUTE latched and a CHORUS
+    /// arrow.
     EditChorusType {
         pending: u8,
+        original: u8,
     },
     /// The unit playing to itself: ALL plays, MUTE stops, PART picks
     /// the song. Reached with both PART halves held through power-on.
@@ -330,13 +333,17 @@ impl FrontPanel {
             }
             return None;
         }
-        if let Mode::EditChorusType { pending } = self.mode {
+        if let Mode::EditChorusType { pending, original } = self.mode {
             match b {
                 Button::Arrow(Pair::Chorus, dir) => {
                     let step: i32 = if dir == Dir::Left { -1 } else { 1 };
-                    let next = (pending as i32 + step).rem_euclid(9);
+                    let next = (pending as i32 + step).rem_euclid(9) as u8;
+                    // The selection sounds at once, so the ear can
+                    // choose; ALL keeps it, MUTE puts the original back.
+                    engine.set_chorus_type(crate::synth::ChorusType::from_index(next));
                     self.mode = Mode::EditChorusType {
-                        pending: next as u8,
+                        pending: next,
+                        original,
                     };
                 }
                 Button::All => {
@@ -345,7 +352,10 @@ impl FrontPanel {
                     self.mode = Mode::Home;
                     self.notice(chorus_type.label());
                 }
-                Button::Mute => self.mode = Mode::Home,
+                Button::Mute => {
+                    engine.set_chorus_type(crate::synth::ChorusType::from_index(original));
+                    self.mode = Mode::Home;
+                }
                 _ => {}
             }
             return None;
@@ -360,8 +370,10 @@ impl FrontPanel {
                     };
                 }
                 Pair::Chorus => {
+                    let original = engine.chorus_type().index();
                     self.mode = Mode::EditChorusType {
-                        pending: engine.chorus_type().index(),
+                        pending: original,
+                        original,
                     };
                 }
                 _ => {}
@@ -530,7 +542,7 @@ impl FrontPanel {
                 screen.all_led = flash_on;
                 screen.mute_led = flash_on;
             }
-            Mode::EditChorusType { pending } => {
+            Mode::EditChorusType { pending, .. } => {
                 screen.part = String::new();
                 screen.instrument = String::new();
                 screen.name = format!("Chorus Type: {pending}");
