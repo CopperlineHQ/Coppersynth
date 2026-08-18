@@ -51,6 +51,7 @@ mod modulator;
 mod chorus;
 mod reverb;
 
+pub use self::chorus::ChorusType;
 pub use self::error::MidiFileError;
 pub use self::error::SoundFontError;
 pub use self::error::SynthesizerError;

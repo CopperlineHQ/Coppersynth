@@ -578,3 +578,69 @@ fn the_boot_line_wears_dashes() {
     assert_eq!(greeting.midi_ch, "---");
     assert_eq!(panel.screen(&mut e, 3_100).level, "127", "and home again");
 }
+
+/// MUTE latched under a MIDI CH arrow opens the Device ID edit: the
+/// arrows cycle 1-32, ALL commits, MUTE cancels -- the mkII's own
+/// panel operation in this unit's grammar.
+#[test]
+fn the_device_id_edit_cycles_commits_and_cancels() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    let mut panel = FrontPanel::default();
+    settled(&mut panel, &mut e);
+    panel.button(&mut e, Button::MuteArrow(Pair::MidiCh, Dir::Right));
+    let screen = panel.screen(&mut e, 4_000);
+    assert_eq!(screen.name, "Device ID: 17", "seeded on the factory ID");
+    assert!(screen.all_led && screen.mute_led, "the lamps flash on");
+    panel.button(&mut e, Button::Arrow(Pair::MidiCh, Dir::Right));
+    assert_eq!(panel.screen(&mut e, 4_000).name, "Device ID: 18");
+    // Wraps: 18 left to 17, 16 ... down past 1 comes round to 32.
+    for _ in 0..18 {
+        panel.button(&mut e, Button::Arrow(Pair::MidiCh, Dir::Left));
+    }
+    assert_eq!(panel.screen(&mut e, 4_000).name, "Device ID: 32");
+    panel.button(&mut e, Button::All);
+    assert_eq!(e.device_id(), 32, "ALL commits the pending value");
+    assert_eq!(
+        panel.screen(&mut e, 4_000).name,
+        "Device ID 32",
+        "the notice"
+    );
+    // Cancel leaves the ID alone.
+    panel.button(&mut e, Button::MuteArrow(Pair::MidiCh, Dir::Left));
+    panel.button(&mut e, Button::Arrow(Pair::MidiCh, Dir::Right));
+    panel.button(&mut e, Button::Mute);
+    assert_eq!(e.device_id(), 32, "MUTE cancels");
+}
+
+/// MUTE latched under a CHORUS arrow opens the Chorus Type edit: 0-8
+/// with the type's name on the second line, ALL commits, MUTE cancels.
+#[test]
+fn the_chorus_type_edit_names_types_and_commits() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    let mut panel = FrontPanel::default();
+    settled(&mut panel, &mut e);
+    panel.button(&mut e, Button::MuteArrow(Pair::Chorus, Dir::Right));
+    let screen = panel.screen(&mut e, 4_000);
+    assert_eq!(screen.name, "Chorus Type: 3", "the unit wakes in Chorus 3");
+    assert_eq!(screen.subtitle, "Chorus 3");
+    for _ in 0..3 {
+        panel.button(&mut e, Button::Arrow(Pair::Chorus, Dir::Right));
+    }
+    let screen = panel.screen(&mut e, 4_000);
+    assert_eq!(screen.name, "Chorus Type: 6");
+    assert_eq!(screen.subtitle, "Flanger");
+    panel.button(&mut e, Button::All);
+    assert_eq!(e.chorus_type().index(), 6, "ALL commits the type");
+    // Cancel keeps what is in force; 0 is Off and stays selectable.
+    panel.button(&mut e, Button::MuteArrow(Pair::Chorus, Dir::Left));
+    for _ in 0..6 {
+        panel.button(&mut e, Button::Arrow(Pair::Chorus, Dir::Left));
+    }
+    assert_eq!(panel.screen(&mut e, 4_000).subtitle, "Off");
+    panel.button(&mut e, Button::Mute);
+    assert_eq!(e.chorus_type().index(), 6, "MUTE cancels");
+}

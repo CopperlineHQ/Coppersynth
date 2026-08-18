@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::synth::array_math::ArrayMath;
 use crate::synth::channel::Channel;
-use crate::synth::chorus::Chorus;
+use crate::synth::chorus::{Chorus, ChorusType};
 use crate::synth::error::SynthesizerError;
 use crate::synth::region_pair::RegionPair;
 use crate::synth::reverb::Reverb;
@@ -43,6 +43,7 @@ pub struct Synthesizer {
     /// returns, 1.0 at the factory setting.
     master_reverb_gain: f32,
     master_chorus_gain: f32,
+    chorus_type: ChorusType,
 
     effects: Option<Effects>,
 }
@@ -135,6 +136,7 @@ impl Synthesizer {
             master_volume,
             master_reverb_gain: 1.0_f32,
             master_chorus_gain: 1.0_f32,
+            chorus_type: ChorusType::Chorus3,
             effects,
         })
     }
@@ -444,8 +446,11 @@ impl Synthesizer {
                 chorus_output_left,
                 chorus_output_right,
             );
-            let chorus_gain =
-                self.master_volume * self.master_chorus_gain * Synthesizer::CHORUS_RETURN;
+            let chorus_gain = if self.chorus_type == ChorusType::Off {
+                0.0
+            } else {
+                self.master_volume * self.master_chorus_gain * Synthesizer::CHORUS_RETURN
+            };
             ArrayMath::multiply_add(chorus_gain, chorus_output_left, &mut self.block_left[..]);
             ArrayMath::multiply_add(chorus_gain, chorus_output_right, &mut self.block_right[..]);
 
@@ -610,6 +615,24 @@ impl Synthesizer {
         self.master_chorus_gain
     }
 
+    /// The chorus character in force.
+    pub fn chorus_type(&self) -> ChorusType {
+        self.chorus_type
+    }
+
+    /// Swap the chorus for another character. The unit is rebuilt
+    /// silent (its delay line starts empty), which is what the
+    /// hardware's macro switch does too.
+    pub fn set_chorus_type(&mut self, chorus_type: ChorusType) {
+        if chorus_type == self.chorus_type {
+            return;
+        }
+        self.chorus_type = chorus_type;
+        if let Some(effects) = self.effects.as_mut() {
+            effects.chorus = Chorus::of_type(self.sample_rate, chorus_type);
+        }
+    }
+
     /// Sets the gain applied to the chorus return.
     pub fn set_master_chorus_gain(&mut self, value: f32) {
         self.master_chorus_gain = value;
@@ -637,12 +660,8 @@ impl Effects {
             reverb_input: vec![0_f32; settings.block_size],
             reverb_output_left: vec![0_f32; settings.block_size],
             reverb_output_right: vec![0_f32; settings.block_size],
-            // The upstream tuning (2 ms delay, +/-1.9 ms at 0.4 Hz) put a
-            // near-identical copy under the dry voice -- comb-filter
-            // colouring, inaudible as chorus. These are the SC-55's own
-            // Chorus 3 as measured off the hardware DSP: taps sweeping
-            // 15-21 ms on a 0.46 Hz triangle.
-            chorus: Chorus::new(settings.sample_rate, 0.018, 0.003, 0.46),
+            // The unit wakes in Chorus 3, exactly as the hardware does.
+            chorus: Chorus::of_type(settings.sample_rate, ChorusType::Chorus3),
             chorus_input_left: vec![0_f32; settings.block_size],
             chorus_input_right: vec![0_f32; settings.block_size],
             chorus_output_left: vec![0_f32; settings.block_size],

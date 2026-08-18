@@ -535,6 +535,16 @@ impl Engine {
     }
 
     /// What the soundfont calls itself, from its own metadata.
+    /// The chorus character in force, for the fascia.
+    pub fn chorus_type(&self) -> crate::synth::ChorusType {
+        self.synth.chorus_type()
+    }
+
+    /// Swap the chorus character (the fascia's Chorus Type edit).
+    pub fn set_chorus_type(&mut self, chorus_type: crate::synth::ChorusType) {
+        self.synth.set_chorus_type(chorus_type);
+    }
+
     pub fn bank_name(&self) -> &str {
         self.synth
             .get_sound_font()

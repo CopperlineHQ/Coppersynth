@@ -44,6 +44,9 @@ pub enum Button {
     Both(Pair),
     /// ALL and MUTE together: monitor.
     Monitor,
+    /// An arrow pressed with MUTE latched down: the service edits
+    /// (MIDI CH pair: device ID; CHORUS pair: chorus type).
+    MuteArrow(Pair, Dir),
 }
 
 /// Text or a picture the engine took off the wire for the display.
@@ -114,6 +117,16 @@ enum Mode {
     /// The undocumented screen: the credits roll until ALL or MUTE
     /// lets the boot carry on.
     Credits,
+    /// "Device ID: <n>" -- the MIDI CH arrows cycle 1-32, ALL commits,
+    /// MUTE cancels. Reached with MUTE latched and a MIDI CH arrow.
+    EditDeviceId {
+        pending: u8,
+    },
+    /// "Chorus Type: <n>" -- the CHORUS arrows cycle 0-8, ALL commits,
+    /// MUTE cancels. Reached with MUTE latched and a CHORUS arrow.
+    EditChorusType {
+        pending: u8,
+    },
     /// The unit playing to itself: ALL plays, MUTE stops, PART picks
     /// the song. Reached with both PART halves held through power-on.
     Demo {
@@ -296,6 +309,65 @@ impl FrontPanel {
                 _ => None,
             };
         }
+        // The service edits: the opening pair's arrows cycle the value,
+        // ALL commits, MUTE cancels, everything else waits.
+        if let Mode::EditDeviceId { pending } = self.mode {
+            match b {
+                Button::Arrow(Pair::MidiCh, dir) => {
+                    let step: i32 = if dir == Dir::Left { -1 } else { 1 };
+                    let next = (pending as i32 - 1 + step).rem_euclid(32) + 1;
+                    self.mode = Mode::EditDeviceId {
+                        pending: next as u8,
+                    };
+                }
+                Button::All => {
+                    engine.set_device_id(pending);
+                    self.mode = Mode::Home;
+                    self.notice(&format!("Device ID {pending}"));
+                }
+                Button::Mute => self.mode = Mode::Home,
+                _ => {}
+            }
+            return None;
+        }
+        if let Mode::EditChorusType { pending } = self.mode {
+            match b {
+                Button::Arrow(Pair::Chorus, dir) => {
+                    let step: i32 = if dir == Dir::Left { -1 } else { 1 };
+                    let next = (pending as i32 + step).rem_euclid(9);
+                    self.mode = Mode::EditChorusType {
+                        pending: next as u8,
+                    };
+                }
+                Button::All => {
+                    let chorus_type = crate::synth::ChorusType::from_index(pending);
+                    engine.set_chorus_type(chorus_type);
+                    self.mode = Mode::Home;
+                    self.notice(chorus_type.label());
+                }
+                Button::Mute => self.mode = Mode::Home,
+                _ => {}
+            }
+            return None;
+        }
+        // MUTE latched under an arrow opens the service edits, seeded
+        // on what is in force; elsewhere the gesture means nothing.
+        if let Button::MuteArrow(pair, _) = b {
+            match pair {
+                Pair::MidiCh => {
+                    self.mode = Mode::EditDeviceId {
+                        pending: engine.device_id(),
+                    };
+                }
+                Pair::Chorus => {
+                    self.mode = Mode::EditChorusType {
+                        pending: engine.chorus_type().index(),
+                    };
+                }
+                _ => {}
+            }
+            return None;
+        }
         // The MT-32 prompt takes ALL as on and MUTE as off, and ignores
         // the rest.
         if self.mode == Mode::ConfirmMt32 {
@@ -364,6 +436,8 @@ impl FrontPanel {
             Button::Monitor => self.press_monitor(engine),
             Button::Both(pair) => self.toggle_view(pair),
             Button::Arrow(pair, dir) => self.press_arrow(engine, pair, dir),
+            // Handled (or dismissed) before this match; nothing to do.
+            Button::MuteArrow(..) => {}
         }
         None
     }
@@ -446,6 +520,29 @@ impl FrontPanel {
                 screen.instrument = String::new();
                 screen.name = "Initializing...".to_string();
                 dash_values(&mut screen);
+            }
+            Mode::EditDeviceId { pending } => {
+                screen.part = String::new();
+                screen.instrument = String::new();
+                screen.name = format!("Device ID: {pending}");
+                dash_values(&mut screen);
+                let flash_on = (now_ms / FLASH_MS).is_multiple_of(2);
+                screen.all_led = flash_on;
+                screen.mute_led = flash_on;
+            }
+            Mode::EditChorusType { pending } => {
+                screen.part = String::new();
+                screen.instrument = String::new();
+                screen.name = format!("Chorus Type: {pending}");
+                // The type's name rides the second line, so the number
+                // means something.
+                screen.subtitle = crate::synth::ChorusType::from_index(pending)
+                    .label()
+                    .to_string();
+                dash_values(&mut screen);
+                let flash_on = (now_ms / FLASH_MS).is_multiple_of(2);
+                screen.all_led = flash_on;
+                screen.mute_led = flash_on;
             }
             Mode::Credits => {
                 screen.part = String::new();
