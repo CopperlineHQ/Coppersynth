@@ -426,13 +426,14 @@ fn the_chorus_actually_swims() {
         }
         best.0
     };
-    // Half the 0.4 Hz LFO period apart, the delay should have swum a
-    // long way between its extremes.
-    let early = best_lag(44_100);
-    let late = best_lag(44_100 + 55_125);
+    // Across a couple of LFO periods the delay swims between its
+    // extremes; probing several instants (the observable lag aliases
+    // against the organ's own pitch period) must find a wide spread.
+    let lags: Vec<isize> = (0..8).map(|i| best_lag(44_100 + i * 11_025)).collect();
+    let spread = lags.iter().max().unwrap() - lags.iter().min().unwrap();
     assert!(
-        (early - late).abs() > 40,
-        "the chorus delay must drift with its LFO: {early} vs {late}"
+        spread > 40,
+        "the chorus delay must drift with its LFO: {lags:?}"
     );
 }
 

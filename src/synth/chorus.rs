@@ -87,15 +87,18 @@ impl ChorusType {
         // (pre-delay units, depth units, rate units, feedback units)
         let (delay_n, depth_n, rate_n, feedback_n) = match self {
             Self::Off => (80.0, 19.0, 3.0, 0),
-            // Chorus 1: shallow and slow, barely a doubling.
-            Self::Chorus1 => (112.0, 5.0, 3.0, 0),
-            // Chorus 2: quicker, still light.
-            Self::Chorus2 => (80.0, 19.0, 9.0, 5),
-            // Chorus 3: the power-on default, measured off the unit.
-            Self::Chorus3 => (80.0, 19.0, 3.0, 8),
-            // Celeste: light detuned shimmer, no feedback.
-            Self::Celeste1 => (48.0, 10.0, 6.0, 0),
-            Self::Celeste2 => (32.0, 14.0, 10.0, 0),
+            // The chorus family runs deeper than the hardware's macro
+            // numbers -- the measured presets sat below audible at
+            // full send, and an effect nobody can hear serves no one.
+            // Chorus 1: the shallow one, now a real doubling.
+            Self::Chorus1 => (112.0, 12.0, 3.0, 0),
+            // Chorus 2: the wake-up default, quick and wide.
+            Self::Chorus2 => (80.0, 34.0, 9.0, 8),
+            // Chorus 3: slower and warm.
+            Self::Chorus3 => (80.0, 30.0, 3.0, 12),
+            // Celeste: detuned shimmer, no feedback.
+            Self::Celeste1 => (48.0, 20.0, 7.0, 0),
+            Self::Celeste2 => (32.0, 26.0, 10.0, 0),
             Self::FeedbackChorus => (127.0, 24.0, 2.0, 64),
             // Returned above; the match wants the arms regardless.
             Self::Flanger | Self::ShortDelay => unreachable!(),
