@@ -72,6 +72,12 @@ impl ChorusType {
     /// go through the conversions in the type's doc comment; Off keeps
     /// harmless numbers and a zero return in the mixer.
     pub(crate) fn params(self) -> (f64, f64, f64, f32) {
+        // The flanger is its own instrument, not a chorus with other
+        // numbers: a short delay swept wide and slowly, with heavy
+        // feedback -- the jet, not a flutter.
+        if self == Self::Flanger {
+            return (0.004, 0.0035, 0.18, 0.875);
+        }
         // (pre-delay units, depth units, rate units, feedback units)
         let (delay_n, depth_n, rate_n, feedback_n) = match self {
             Self::Off => (80.0, 19.0, 3.0, 0),
@@ -84,9 +90,9 @@ impl ChorusType {
             // Celeste: light detuned shimmer, no feedback.
             Self::Celeste1 => (48.0, 10.0, 6.0, 0),
             Self::Celeste2 => (32.0, 14.0, 10.0, 0),
-            // Flanger: short sweep, heavy feedback, the jet.
-            Self::Flanger => (127.0, 5.0, 1.0, 112),
             Self::FeedbackChorus => (127.0, 24.0, 2.0, 64),
+            // Returned above; the match wants the arm regardless.
+            Self::Flanger => unreachable!(),
             Self::ShortDelay => (127.0, 0.0, 0.0, 80),
         };
         let delay = (1.0 + 6.0 * delay_n) / 32_000.0;
