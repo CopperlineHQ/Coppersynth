@@ -736,6 +736,39 @@ impl FrontPanel {
             Mode::Credits => {
                 screen.part = String::new();
                 screen.instrument = String::new();
+                // A little lightshow while the credits roll -- the live
+                // meters wait for the boot. Three acts take five-second
+                // turns: a travelling wave, a breathing two-wave
+                // interference shimmer, and a blob bouncing to and fro.
+                // All of it is a pure function of the clock, so replays
+                // draw the same show.
+                let t = now_ms as f32 / 1000.0;
+                let act = (now_ms / 5_000) % 3;
+                for (c, bar) in screen.bars.iter_mut().enumerate() {
+                    let x = c as f32;
+                    let h = match act {
+                        0 => 8.5 + 7.5 * (t * 5.24 - x * 0.45).sin(),
+                        1 => {
+                            let breathe = 4.5 + 3.0 * (t * 1.4).sin();
+                            8.5 + breathe
+                                * (0.6 * (t * 5.2 - x * 0.45).sin()
+                                    + 0.4 * (x * 0.8 - t * 8.8).sin())
+                        }
+                        _ => {
+                            let sweep = (t * 0.4).fract();
+                            let pos = if sweep < 0.5 {
+                                sweep * 2.0
+                            } else {
+                                2.0 - sweep * 2.0
+                            } * 15.0;
+                            let arc = (t * 2.4).sin().abs();
+                            let d = (x - pos).abs();
+                            1.0 + (15.0 * arc - d * d * 1.8).max(0.0)
+                        }
+                    };
+                    let height = h.round().clamp(1.0, 16.0) as u32;
+                    *bar = ((1u32 << height) - 1) as u16;
+                }
                 let since = *self.credits_started.get_or_insert(now_ms);
                 let text: Vec<char> = CREDITS.chars().collect();
                 screen.name = scroll_line(&text, since, now_ms);
