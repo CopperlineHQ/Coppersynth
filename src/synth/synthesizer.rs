@@ -176,7 +176,15 @@ impl Synthesizer {
                 0x2A => channel_info.set_pan_fine(data2), // Pan Fine
                 0x0B => channel_info.set_expression_coarse(data2), // Expression Coarse
                 0x2B => channel_info.set_expression_fine(data2), // Expression Fine
+                0x05 => channel_info.set_portamento_time(data2), // Portamento Time
                 0x40 => channel_info.set_hold_pedal(data2), // Hold Pedal
+                0x41 => channel_info.set_portamento_pedal(data2), // Portamento
+                0x42 => { // Sostenuto
+                    channel_info.set_sostenuto_pedal(data2);
+                    self.apply_sostenuto(channel, data2 >= 64);
+                }
+                0x43 => channel_info.set_soft_pedal(data2), // Soft Pedal
+                0x54 => channel_info.set_portamento_source(data2), // Portamento Control
                 0x5B => channel_info.set_reverb_send(data2), // Reverb Send
                 0x5D => channel_info.set_chorus_send(data2), // Chorus Send
                 0x63 => channel_info.set_nrpn_coarse(data2), // NRPN Coarse
@@ -186,12 +194,38 @@ impl Synthesizer {
                 0x78 => self.note_off_all_channel(channel, true), // All Sound Off
                 0x79 => self.reset_all_controllers_channel(channel), // Reset All Controllers
                 0x7B => self.note_off_all_channel(channel, false), // All Note Off
+                // Omni off/on are recognized only as all-notes-off; the
+                // mode does not change, exactly as the unit reads them.
+                0x7C | 0x7D => self.note_off_all_channel(channel, false),
+                0x7E => { // Mono (M = 1 whatever the count asks)
+                    channel_info.set_mono_mode(true);
+                    self.note_off_all_channel(channel, true);
+                }
+                0x7F => { // Poly
+                    channel_info.set_mono_mode(false);
+                    self.note_off_all_channel(channel, true);
+                }
                 _ => (),
                 }
             }
-            0xC0 => channel_info.set_patch(data1), // Program Change
-            0xE0 => channel_info.set_pitch_bend(data1, data2), // Pitch Bend
+            // Both pressures are received and kept for bank modulators to
+            // route; the unit itself sends them nowhere by default.
+            0xA0 => channel_info.set_poly_pressure(data1, data2), // Poly Pressure
+            0xC0 => channel_info.set_patch(data1),                // Program Change
+            0xD0 => channel_info.set_channel_pressure(data1),     // Channel Pressure
+            0xE0 => channel_info.set_pitch_bend(data1, data2),    // Pitch Bend
             _ => (),
+        }
+    }
+
+    /// The sostenuto pedal going down catches the notes sounding at
+    /// that moment; coming up it lets go of them all. Notes played
+    /// while it is down are never caught.
+    fn apply_sostenuto(&mut self, channel: i32, down: bool) {
+        for voice in self.voices.get_active_voices().iter_mut() {
+            if voice.channel() == channel {
+                voice.set_sostenuto_held(down);
+            }
         }
     }
 
@@ -228,6 +262,16 @@ impl Synthesizer {
 
         if !(0 <= channel && channel < self.channels.len() as i32) {
             return;
+        }
+
+        // Mode 4: one voice at a time -- the note that arrives releases
+        // whatever the channel was sounding.
+        if self.channels[channel as usize].get_mono_mode() {
+            for voice in self.voices.get_active_voices().iter_mut() {
+                if voice.channel() == channel {
+                    voice.end();
+                }
+            }
         }
 
         let channel_info = &self.channels[channel as usize];

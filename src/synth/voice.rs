@@ -11,6 +11,9 @@ use crate::synth::modulator::{Modulator, DEFAULT_VEL_TO_ATTENUATION};
 use crate::synth::oscillator::Oscillator;
 use crate::synth::region_ex::RegionEx;
 use crate::synth::region_pair::RegionPair;
+
+/// The soft pedal's attenuation on notes struck under it (about -4 dB).
+const SOFT_PEDAL_GAIN: f32 = 0.63;
 use crate::synth::soundfont_math::SoundFontMath;
 use crate::synth::synthesizer_settings::SynthesizerSettings;
 use crate::synth::volume_envelope::VolumeEnvelope;
@@ -47,6 +50,12 @@ pub(crate) struct Voice {
     pub(crate) current_mix_gain_right: f32,
 
     pub(crate) previous_reverb_send: f32,
+    /// Caught by the sostenuto pedal: release waits for the pedal even
+    /// after the key (or the hold pedal) lets go.
+    sostenuto_held: bool,
+    /// Struck under the soft pedal: the note keeps its softened voice
+    /// for its whole life, as a softened hammer would.
+    soft_struck: bool,
     pub(crate) previous_chorus_send: f32,
     pub(crate) current_reverb_send: f32,
     pub(crate) current_chorus_send: f32,
@@ -129,6 +138,8 @@ impl Voice {
             current_mix_gain_left: 0_f32,
             current_mix_gain_right: 0_f32,
             previous_reverb_send: 0_f32,
+            sostenuto_held: false,
+            soft_struck: false,
             previous_chorus_send: 0_f32,
             current_reverb_send: 0_f32,
             current_chorus_send: 0_f32,
@@ -168,11 +179,18 @@ impl Voice {
         }
     }
 
+    pub(crate) fn set_sostenuto_held(&mut self, held: bool) {
+        self.sostenuto_held = held;
+    }
+
     pub(crate) fn start(&mut self, region: &RegionPair, channel: i32, key: i32, velocity: i32) {
         self.exclusive_class = region.get_exclusive_class();
         self.channel = channel;
         self.key = key;
         self.velocity = velocity;
+        // A voice from the pool must not inherit the last note's pedals.
+        self.sostenuto_held = false;
+        self.soft_struck = false;
 
         // The bank's modulators for this note: the instrument level, which
         // superseded the defaults where it names their routing, and the
@@ -389,11 +407,20 @@ impl Voice {
         self.previous_reverb_send = self.current_reverb_send;
         self.previous_chorus_send = self.current_chorus_send;
 
+        if self.voice_length == 0 && channel_info.get_soft_pedal() {
+            self.soft_struck = true;
+        }
+
         // According to the GM spec, the following value should be squared.
         let ve = channel_info.get_volume() * channel_info.get_expression();
         let channel_gain = ve * ve;
 
         let mut mix_gain = self.note_gain * channel_gain * self.vol_env.get_value();
+        if self.soft_struck {
+            // The soft pedal's quieter, rounder hammer: about -4 dB and
+            // a gently closed filter on notes struck while it is down.
+            mix_gain *= SOFT_PEDAL_GAIN;
+        }
         let mod_atten_cb = self.static_atten_cb + self.dyn_atten_cb;
         if mod_atten_cb != 0_f32 {
             // Attenuation modulators land in centibels and are scaled by
@@ -486,7 +513,10 @@ impl Voice {
             return;
         }
 
-        if self.voice_state == VoiceState::ReleaseRequested && !channel_info.get_hold_pedal() {
+        if self.voice_state == VoiceState::ReleaseRequested
+            && !channel_info.get_hold_pedal()
+            && !self.sostenuto_held
+        {
             self.vol_env.release();
             self.mod_env.release();
             self.oscillator.release();

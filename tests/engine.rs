@@ -486,3 +486,123 @@ fn mt32_traffic_selects_the_cm64_kit() {
     assert!(!e.translating());
     assert_eq!(e.part_view(DRUM_PART).instrument, 0, "Standard is back");
 }
+
+/// A window of rendered audio, for before/after comparisons.
+fn rms_after(e: &mut Engine, frames: usize) -> f32 {
+    let mut out = vec![(0.0f32, 0.0f32); frames];
+    e.render(&mut out);
+    (out.iter().map(|&(l, r)| l * l + r * r).sum::<f32>() / (2.0 * out.len() as f32)).sqrt()
+}
+
+/// CC66 catches the notes sounding when it goes down and holds their
+/// release; a note struck afterwards is never caught.
+#[test]
+fn sostenuto_holds_what_it_caught() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    send(&mut e, &[0xC0, 48, 0x90, 60, 110]);
+    let _ = rms_after(&mut e, 4_410);
+    send(&mut e, &[0xB0, 0x42, 127]); // sostenuto down on the sounding note
+    send(&mut e, &[0x90, 67, 110]); // struck under the pedal: not caught
+    let _ = rms_after(&mut e, 4_410);
+    send(&mut e, &[0x80, 60, 0, 0x80, 67, 0]);
+    let held = rms_after(&mut e, 22_050);
+    // The caught note is still singing well after both keys lifted.
+    let Some(mut dry) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    send(&mut dry, &[0xC0, 48, 0x90, 60, 110]);
+    let _ = rms_after(&mut dry, 8_820);
+    send(&mut dry, &[0x80, 60, 0]);
+    let released = rms_after(&mut dry, 22_050);
+    assert!(
+        held > released * 2.0,
+        "sostenuto must hold its notes (held {held}, released {released})"
+    );
+    // Pedal up: the caught note lets go and the tail dies away.
+    send(&mut e, &[0xB0, 0x42, 0]);
+    let _ = rms_after(&mut e, 44_100);
+    let after = rms_after(&mut e, 11_025);
+    assert!(
+        after < held * 0.5,
+        "pedal up must release the caught note (after {after}, held {held})"
+    );
+}
+
+/// CC67 softens the hammer: a note struck under the pedal is quieter
+/// than the same note without it, and stays soft for its whole life.
+#[test]
+fn the_soft_pedal_quiets_struck_notes() {
+    let strike = |soft: bool| -> f32 {
+        let Some(mut e) = engine(Mt32Mode::Off) else {
+            return -1.0;
+        };
+        send(&mut e, &[0xC0, 0]);
+        if soft {
+            send(&mut e, &[0xB0, 0x43, 127]);
+        }
+        send(&mut e, &[0x90, 60, 110]);
+        rms_after(&mut e, 22_050)
+    };
+    let (loud, soft) = (strike(false), strike(true));
+    if loud < 0.0 {
+        return;
+    }
+    assert!(
+        soft > loud * 0.4 && soft < loud * 0.8,
+        "the soft pedal takes about 4 dB (loud {loud}, soft {soft})"
+    );
+}
+
+/// CC126 makes the channel monophonic: the arriving note releases the
+/// one before it, and CC127 gives polyphony back.
+#[test]
+fn mono_mode_gives_one_voice_at_a_time() {
+    let tail = |mono: bool| -> f32 {
+        let Some(mut e) = engine(Mt32Mode::Off) else {
+            return -1.0;
+        };
+        send(&mut e, &[0xC0, 48]);
+        if mono {
+            send(&mut e, &[0xB0, 0x7E, 1]);
+        }
+        send(&mut e, &[0x90, 48, 110]);
+        let _ = rms_after(&mut e, 8_820);
+        send(&mut e, &[0x90, 72, 110]);
+        let _ = rms_after(&mut e, 8_820);
+        // Lift only the second note: in mono the first is already gone
+        // and the channel falls silent; in poly it still sings.
+        send(&mut e, &[0x80, 72, 0]);
+        let _ = rms_after(&mut e, 22_050);
+        rms_after(&mut e, 11_025)
+    };
+    let (poly, mono) = (tail(false), tail(true));
+    if poly < 0.0 {
+        return;
+    }
+    assert!(
+        mono < poly * 0.4,
+        "mono must have released the first note (mono {mono}, poly {poly})"
+    );
+}
+
+/// CC121 resets the pedals with the rest of its table: a note the hold
+/// pedal was sustaining releases when the controllers reset.
+#[test]
+fn reset_all_controllers_lifts_the_pedals() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    send(&mut e, &[0xC0, 48, 0xB0, 0x40, 127, 0x90, 60, 110]);
+    let _ = rms_after(&mut e, 8_820);
+    send(&mut e, &[0x80, 60, 0]);
+    let held = rms_after(&mut e, 22_050);
+    send(&mut e, &[0xB0, 0x79, 0]);
+    let _ = rms_after(&mut e, 44_100);
+    let after = rms_after(&mut e, 11_025);
+    assert!(
+        after < held * 0.5,
+        "the reset lifts the hold pedal (after {after}, held {held})"
+    );
+}

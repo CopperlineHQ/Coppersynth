@@ -20,6 +20,23 @@ pub(crate) struct Channel {
     pan: i16,
     expression: i16,
     hold_pedal: bool,
+    sostenuto_pedal: bool,
+    soft_pedal: bool,
+    portamento_pedal: bool,
+    /// CC5, 0-127; 0 is the fastest glide.
+    portamento_time: u8,
+    /// CC84's armed source key, spent by the next note-on.
+    portamento_source: Option<u8>,
+    /// Mode 4 (mono, M=1) against the power-on Mode 3.
+    mono_mode: bool,
+    /// Channel pressure, received and offered to bank modulators; the
+    /// unit itself routes it nowhere by default.
+    channel_pressure: u8,
+    /// Polyphonic key pressure per key, likewise.
+    poly_pressure: [u8; 128],
+    /// CC0 latches here and lands on the program change, as the unit
+    /// suspends bank select until then.
+    pending_bank: Option<i32>,
 
     reverb_send: u8,
     chorus_send: u8,
@@ -51,6 +68,15 @@ impl Channel {
             pan: 0,
             expression: 0,
             hold_pedal: false,
+            sostenuto_pedal: false,
+            soft_pedal: false,
+            portamento_pedal: false,
+            portamento_time: 0,
+            portamento_source: None,
+            mono_mode: false,
+            channel_pressure: 0,
+            poly_pressure: [0; 128],
+            pending_bank: None,
             reverb_send: 0,
             chorus_send: 0,
             rpn: 0,
@@ -76,6 +102,15 @@ impl Channel {
         self.pan = 64 << 7;
         self.expression = 127 << 7;
         self.hold_pedal = false;
+        self.sostenuto_pedal = false;
+        self.soft_pedal = false;
+        self.portamento_pedal = false;
+        self.portamento_time = 0;
+        self.portamento_source = None;
+        self.mono_mode = false;
+        self.channel_pressure = 0;
+        self.poly_pressure = [0; 128];
+        self.pending_bank = None;
 
         self.reverb_send = 40;
         self.chorus_send = 0;
@@ -101,6 +136,12 @@ impl Channel {
         self.modulation = 0;
         self.expression = 127 << 7;
         self.hold_pedal = false;
+        self.sostenuto_pedal = false;
+        self.soft_pedal = false;
+        self.portamento_pedal = false;
+        self.portamento_source = None;
+        self.channel_pressure = 0;
+        self.poly_pressure = [0; 128];
 
         self.rpn = -1;
 
@@ -112,14 +153,19 @@ impl Channel {
     }
 
     pub(crate) fn set_bank(&mut self, value: i32) {
-        self.bank_number = value;
-
+        // The unit suspends bank select until the program change that
+        // completes it; a bank sent on its own must not retarget notes
+        // already choosing presets. (Drum parts ignore it outright.)
         if self.is_percussion_channel {
-            self.bank_number += 128;
+            return;
         }
+        self.pending_bank = Some(value);
     }
 
     pub(crate) fn set_patch(&mut self, value: i32) {
+        if let Some(bank) = self.pending_bank.take() {
+            self.bank_number = bank;
+        }
         self.patch_number = value;
     }
 
@@ -157,6 +203,72 @@ impl Channel {
 
     pub(crate) fn set_hold_pedal(&mut self, value: i32) {
         self.hold_pedal = value >= 64;
+    }
+
+    pub(crate) fn set_sostenuto_pedal(&mut self, value: i32) {
+        self.sostenuto_pedal = value >= 64;
+    }
+
+    pub(crate) fn get_sostenuto_pedal(&self) -> bool {
+        self.sostenuto_pedal
+    }
+
+    pub(crate) fn set_soft_pedal(&mut self, value: i32) {
+        self.soft_pedal = value >= 64;
+    }
+
+    pub(crate) fn get_soft_pedal(&self) -> bool {
+        self.soft_pedal
+    }
+
+    pub(crate) fn set_portamento_pedal(&mut self, value: i32) {
+        self.portamento_pedal = value >= 64;
+    }
+
+    pub(crate) fn get_portamento_pedal(&self) -> bool {
+        self.portamento_pedal
+    }
+
+    pub(crate) fn set_portamento_time(&mut self, value: i32) {
+        self.portamento_time = value as u8;
+    }
+
+    pub(crate) fn get_portamento_time(&self) -> u8 {
+        self.portamento_time
+    }
+
+    pub(crate) fn set_portamento_source(&mut self, key: i32) {
+        self.portamento_source = Some(key as u8);
+    }
+
+    pub(crate) fn take_portamento_source(&mut self) -> Option<u8> {
+        self.portamento_source.take()
+    }
+
+    pub(crate) fn set_mono_mode(&mut self, mono: bool) {
+        self.mono_mode = mono;
+    }
+
+    pub(crate) fn get_mono_mode(&self) -> bool {
+        self.mono_mode
+    }
+
+    pub(crate) fn set_channel_pressure(&mut self, value: i32) {
+        self.channel_pressure = value as u8;
+    }
+
+    pub(crate) fn get_channel_pressure(&self) -> u8 {
+        self.channel_pressure
+    }
+
+    pub(crate) fn set_poly_pressure(&mut self, key: i32, value: i32) {
+        if (0..128).contains(&key) {
+            self.poly_pressure[key as usize] = value as u8;
+        }
+    }
+
+    pub(crate) fn get_poly_pressure(&self, key: i32) -> u8 {
+        self.poly_pressure.get(key as usize).copied().unwrap_or(0)
     }
 
     pub(crate) fn set_reverb_send(&mut self, value: i32) {
