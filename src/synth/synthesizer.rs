@@ -637,7 +637,12 @@ impl Effects {
             reverb_input: vec![0_f32; settings.block_size],
             reverb_output_left: vec![0_f32; settings.block_size],
             reverb_output_right: vec![0_f32; settings.block_size],
-            chorus: Chorus::new(settings.sample_rate, 0.002, 0.0019, 0.4),
+            // The upstream tuning (2 ms delay, +/-1.9 ms at 0.4 Hz) put a
+            // near-identical copy under the dry voice -- comb-filter
+            // colouring, inaudible as chorus. These are the SC-55's own
+            // Chorus 3 as measured off the hardware DSP: taps sweeping
+            // 15-21 ms on a 0.46 Hz triangle.
+            chorus: Chorus::new(settings.sample_rate, 0.018, 0.003, 0.46),
             chorus_input_left: vec![0_f32; settings.block_size],
             chorus_input_right: vec![0_f32; settings.block_size],
             chorus_output_left: vec![0_f32; settings.block_size],

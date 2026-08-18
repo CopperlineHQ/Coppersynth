@@ -335,11 +335,44 @@ fn reverb_and_chorus_are_audible() {
         wet_ring > dry_ring * 5.0 && mid_ring > dry_ring * 2.0,
         "the room rings after the hit, more the more send"
     );
-    let (chorus_held, _) = probe(0, 127);
-    assert!(
-        chorus_held > dry_held * 1.1,
-        "full chorus thickens the note audibly"
-    );
+    // Chorus is a doubled, detuned voice, not a louder one: an 18 ms
+    // wet copy barely moves a held note's RMS (the old 2 ms comb summed
+    // coherently and did, which is what the previous assertion leaned
+    // on). What proves the send is alive is wet content: the difference
+    // between the chorus-off and chorus-full renders of the same
+    // sustained note.
+    let strings = |chorus: u8| -> Vec<(f32, f32)> {
+        let Some(mut e) = engine(Mt32Mode::Off) else {
+            return Vec::new();
+        };
+        e.set_part_chorus(0, chorus);
+        send(&mut e, &[0xC0, 48, 0x90, 60, 110]);
+        let mut out = vec![(0.0f32, 0.0f32); 44_100];
+        e.render(&mut out);
+        out
+    };
+    let (c0, c127) = (strings(0), strings(127));
+    if !c0.is_empty() {
+        let dry = rms_of(&c0);
+        let wet = diff_rms_of(&c0, &c127);
+        assert!(
+            wet > dry * 0.25,
+            "full chorus must put real wet under the note (wet {wet}, dry {dry})"
+        );
+    }
+}
+
+fn rms_of(buf: &[(f32, f32)]) -> f32 {
+    (buf.iter().map(|&(l, r)| l * l + r * r).sum::<f32>() / (2.0 * buf.len() as f32)).sqrt()
+}
+
+fn diff_rms_of(a: &[(f32, f32)], b: &[(f32, f32)]) -> f32 {
+    (a.iter()
+        .zip(b)
+        .map(|(&(al, ar), &(bl, br))| (al - bl) * (al - bl) + (ar - br) * (ar - br))
+        .sum::<f32>()
+        / (2.0 * a.len() as f32))
+        .sqrt()
 }
 
 /// The bundled bank is really in there: no files, no configuration,

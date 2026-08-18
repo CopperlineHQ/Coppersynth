@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
-use std::f64::consts;
+/// Chorus 3's feedback gain, per the unit's DSP (4/64).
+const FEEDBACK: f32 = 0.0625;
 
 #[derive(Debug)]
 #[non_exhaustive]
@@ -21,17 +22,23 @@ impl Chorus {
         let buffer_l = vec![0_f32; ((sample_rate as f64) * (delay + depth)) as usize + 2];
         let buffer_r = vec![0_f32; ((sample_rate as f64) * (delay + depth)) as usize + 2];
 
+        // A triangle sweep, as the unit's own DSP runs it: the tap walks
+        // the span at a constant rate and turns round, rather than
+        // easing sinusoidally through it.
         let mut delay_table = vec![0_f32; ((sample_rate as f64) / frequency).round() as usize];
         let delay_table_length = delay_table.len();
         for (t, input) in delay_table.iter_mut().enumerate().take(delay_table_length) {
-            let phase = 2.0 * consts::PI * (t as f64) / (delay_table_length as f64);
-            *input = ((sample_rate as f64) * (delay + depth * phase.sin())) as f32;
+            let phase = (t as f64) / (delay_table_length as f64);
+            let triangle = 1.0 - 4.0 * (phase - 0.5).abs();
+            *input = ((sample_rate as f64) * (delay + depth * triangle)) as f32;
         }
 
         let buffer_index: usize = 0;
 
+        // The two taps sweep in opposition -- one rises while the other
+        // falls -- which is what spreads the image.
         let delay_table_index_l: usize = 0;
-        let delay_table_index_r: usize = delay_table_length / 4;
+        let delay_table_index_r: usize = delay_table_length / 2;
 
         Self {
             buffer_l,
@@ -103,8 +110,9 @@ impl Chorus {
                 }
             }
 
-            self.buffer_l[self.buffer_index] = input_left[t];
-            self.buffer_r[self.buffer_index] = input_right[t];
+            // Chorus 3's feedback is a whisper (4/64), but it is there.
+            self.buffer_l[self.buffer_index] = input_left[t] + FEEDBACK * output_left[t];
+            self.buffer_r[self.buffer_index] = input_right[t] + FEEDBACK * output_right[t];
             self.buffer_index += 1;
             if self.buffer_index == buffer_length {
                 self.buffer_index = 0;
