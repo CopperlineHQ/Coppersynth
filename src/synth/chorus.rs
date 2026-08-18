@@ -78,6 +78,12 @@ impl ChorusType {
         if self == Self::Flanger {
             return (0.004, 0.0035, 0.18, 0.875);
         }
+        // The short delay likewise: the chorus hardware's buffer capped
+        // it at a metallic 24 ms; a slapback wants real distance and a
+        // couple of repeats.
+        if self == Self::ShortDelay {
+            return (0.085, 0.0, 0.11, 0.35);
+        }
         // (pre-delay units, depth units, rate units, feedback units)
         let (delay_n, depth_n, rate_n, feedback_n) = match self {
             Self::Off => (80.0, 19.0, 3.0, 0),
@@ -91,9 +97,8 @@ impl ChorusType {
             Self::Celeste1 => (48.0, 10.0, 6.0, 0),
             Self::Celeste2 => (32.0, 14.0, 10.0, 0),
             Self::FeedbackChorus => (127.0, 24.0, 2.0, 64),
-            // Returned above; the match wants the arm regardless.
-            Self::Flanger => unreachable!(),
-            Self::ShortDelay => (127.0, 0.0, 0.0, 80),
+            // Returned above; the match wants the arms regardless.
+            Self::Flanger | Self::ShortDelay => unreachable!(),
         };
         let delay = (1.0 + 6.0 * delay_n) / 32_000.0;
         let depth = (10.0 * depth_n / 2.0) / 32_000.0;
