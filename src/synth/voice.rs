@@ -56,6 +56,11 @@ pub(crate) struct Voice {
     /// Struck under the soft pedal: the note keeps its softened voice
     /// for its whole life, as a softened hammer would.
     soft_struck: bool,
+    /// The portamento glide still to travel, in semitones, decaying
+    /// toward zero block by block.
+    glide_offset: f32,
+    /// The per-block decay the synthesizer derived from CC5.
+    glide_decay: f32,
     pub(crate) previous_chorus_send: f32,
     pub(crate) current_reverb_send: f32,
     pub(crate) current_chorus_send: f32,
@@ -140,6 +145,8 @@ impl Voice {
             previous_reverb_send: 0_f32,
             sostenuto_held: false,
             soft_struck: false,
+            glide_offset: 0_f32,
+            glide_decay: 1_f32,
             previous_chorus_send: 0_f32,
             current_reverb_send: 0_f32,
             current_chorus_send: 0_f32,
@@ -183,6 +190,28 @@ impl Voice {
         self.sostenuto_held = held;
     }
 
+    /// Begin this voice gliding in from another key (portamento, or a
+    /// Portamento Control message ahead of the note).
+    pub(crate) fn glide_from(&mut self, source_key: i32, decay_per_block: f32) {
+        self.glide_offset = source_key as f32 - self.key as f32;
+        self.glide_decay = decay_per_block;
+    }
+
+    /// Portamento Control onto a sounding voice: re-tune to the new
+    /// key, gliding from wherever the pitch is now, without
+    /// re-triggering -- the manual's legato case.
+    pub(crate) fn retune_to(&mut self, new_key: i32, decay_per_block: f32) {
+        self.glide_offset += self.key as f32 - new_key as f32;
+        self.key = new_key;
+        self.glide_decay = decay_per_block;
+    }
+
+    /// Still held down: neither the key nor a pedal has asked for the
+    /// release yet.
+    pub(crate) fn is_sounding(&self) -> bool {
+        self.voice_state == VoiceState::Playing
+    }
+
     pub(crate) fn start(&mut self, region: &RegionPair, channel: i32, key: i32, velocity: i32) {
         self.exclusive_class = region.get_exclusive_class();
         self.channel = channel;
@@ -191,6 +220,8 @@ impl Voice {
         // A voice from the pool must not inherit the last note's pedals.
         self.sostenuto_held = false;
         self.soft_struck = false;
+        self.glide_offset = 0_f32;
+        self.glide_decay = 1_f32;
 
         // The bank's modulators for this note: the instrument level, which
         // superseded the defaults where it names their routing, and the
@@ -380,7 +411,17 @@ impl Voice {
         let mod_pitch_change = self.mod_lfo_to_pitch * self.mod_lfo.get_value()
             + self.mod_env_to_pitch * self.mod_env.get_value();
         let channel_pitch_change = channel_info.get_tune() + channel_info.get_pitch_bend();
-        let pitch = self.key as f32 + vib_pitch_change + mod_pitch_change + channel_pitch_change;
+        let pitch = self.key as f32
+            + self.glide_offset
+            + vib_pitch_change
+            + mod_pitch_change
+            + channel_pitch_change;
+        // The glide closes on the note exponentially; close enough is
+        // arrived.
+        self.glide_offset *= self.glide_decay;
+        if self.glide_offset.abs() < 0.005 {
+            self.glide_offset = 0_f32;
+        }
         if !self.oscillator.process(data, &mut self.block[..], pitch) {
             return false;
         }

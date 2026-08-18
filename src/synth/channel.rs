@@ -25,6 +25,9 @@ pub(crate) struct Channel {
     portamento_pedal: bool,
     /// CC5, 0-127; 0 is the fastest glide.
     portamento_time: u8,
+    /// The channel's most recent note-on, where a portamento glide
+    /// starts from when the pedal is down.
+    last_key: Option<u8>,
     /// CC84's armed source key, spent by the next note-on.
     portamento_source: Option<u8>,
     /// Mode 4 (mono, M=1) against the power-on Mode 3.
@@ -72,6 +75,7 @@ impl Channel {
             soft_pedal: false,
             portamento_pedal: false,
             portamento_time: 0,
+            last_key: None,
             portamento_source: None,
             mono_mode: false,
             channel_pressure: 0,
@@ -106,6 +110,7 @@ impl Channel {
         self.soft_pedal = false;
         self.portamento_pedal = false;
         self.portamento_time = 0;
+        self.last_key = None;
         self.portamento_source = None;
         self.mono_mode = false;
         self.channel_pressure = 0;
@@ -235,6 +240,14 @@ impl Channel {
 
     pub(crate) fn get_portamento_time(&self) -> u8 {
         self.portamento_time
+    }
+
+    pub(crate) fn set_last_key(&mut self, key: i32) {
+        self.last_key = Some(key as u8);
+    }
+
+    pub(crate) fn get_last_key(&self) -> Option<u8> {
+        self.last_key
     }
 
     pub(crate) fn set_portamento_source(&mut self, key: i32) {

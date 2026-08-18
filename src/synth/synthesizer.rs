@@ -218,6 +218,19 @@ impl Synthesizer {
         }
     }
 
+    /// The per-block decay of a portamento glide at the channel's CC5
+    /// time. 0 is instant, as the unit reads it; upward the glide
+    /// closes on a time constant that grows to a couple of seconds --
+    /// an approximation of the hardware's curve.
+    fn portamento_decay(&self, time: u8) -> f32 {
+        if time == 0 {
+            return 0_f32;
+        }
+        let t = time as f32 / 127.0;
+        let tau = 0.005 + 2.5 * t * t;
+        (-(self.block_size as f32) / (self.sample_rate as f32 * tau)).exp()
+    }
+
     /// The sostenuto pedal going down catches the notes sounding at
     /// that moment; coming up it lets go of them all. Notes played
     /// while it is down are never caught.
@@ -264,6 +277,33 @@ impl Synthesizer {
             return;
         }
 
+        // Portamento first: a Portamento Control source armed ahead of
+        // this note re-tunes a sounding voice of that key in place --
+        // legato, no new voice, exactly the manual's example. Armed
+        // with no such voice, or with the pedal down, the new voice
+        // glides in from the source instead.
+        let decay = self.portamento_decay(self.channels[channel as usize].get_portamento_time());
+        let mut glide_source: Option<i32> = None;
+        if let Some(src) = self.channels[channel as usize].take_portamento_source() {
+            let mut retuned = false;
+            for voice in self.voices.get_active_voices().iter_mut() {
+                if voice.channel() == channel && voice.key() == src as i32 && voice.is_sounding() {
+                    voice.retune_to(key, decay);
+                    retuned = true;
+                    break;
+                }
+            }
+            if retuned {
+                self.channels[channel as usize].set_last_key(key);
+                return;
+            }
+            glide_source = Some(src as i32);
+        } else if self.channels[channel as usize].get_portamento_pedal() {
+            glide_source = self.channels[channel as usize]
+                .get_last_key()
+                .map(i32::from);
+        }
+
         // Mode 4: one voice at a time -- the note that arrives releases
         // whatever the channel was sounding.
         if self.channels[channel as usize].get_mono_mode() {
@@ -307,12 +347,16 @@ impl Synthesizer {
                         let region_pair = RegionPair::new(preset_region, instrument_region);
 
                         if let Some(value) = self.voices.request_new(instrument_region, channel) {
-                            value.start(&region_pair, channel, key, velocity)
+                            value.start(&region_pair, channel, key, velocity);
+                            if let Some(src) = glide_source {
+                                value.glide_from(src, decay);
+                            }
                         }
                     }
                 }
             }
         }
+        self.channels[channel as usize].set_last_key(key);
     }
 
     /// Stops all the notes in the specified channel.

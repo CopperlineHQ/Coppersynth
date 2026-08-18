@@ -606,3 +606,60 @@ fn reset_all_controllers_lifts_the_pedals() {
         "the reset lifts the hold pedal (after {after}, held {held})"
     );
 }
+
+/// Portamento bends the pitch in from the note before: the glide's
+/// early audio differs from a straight strike of the same note, and
+/// settles onto it by the end.
+#[test]
+fn portamento_glides_between_notes() {
+    let run = |portamento: bool| -> Option<Vec<(f32, f32)>> {
+        let mut e = engine(Mt32Mode::Off)?;
+        send(&mut e, &[0xC0, 80]); // square lead, a naked pitch
+        if portamento {
+            send(&mut e, &[0xB0, 0x41, 127, 0xB0, 0x05, 64]);
+        }
+        send(&mut e, &[0x90, 48, 110]);
+        let mut warm = vec![(0.0f32, 0.0f32); 8_820];
+        e.render(&mut warm);
+        send(&mut e, &[0x80, 48, 0, 0x90, 72, 110]);
+        let mut out = vec![(0.0f32, 0.0f32); 44_100];
+        e.render(&mut out);
+        Some(out)
+    };
+    let (Some(straight), Some(glide)) = (run(false), run(true)) else {
+        return;
+    };
+    let head_diff = diff_rms_of(&straight[..8_820], &glide[..8_820]);
+    let head_level = rms_of(&straight[..8_820]);
+    assert!(
+        head_diff > head_level * 0.3,
+        "the glide's opening must sit away from the target pitch \
+         (diff {head_diff}, level {head_level})"
+    );
+}
+
+/// Portamento Control re-tunes a sounding voice without re-striking:
+/// the legato render carries no second attack.
+#[test]
+fn portamento_control_retunes_legato() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    send(&mut e, &[0xC0, 80, 0x90, 60, 110]);
+    let _ = rms_after(&mut e, 8_820);
+    // CC84 from C4, then the E above: the voice re-tunes, no new strike.
+    send(&mut e, &[0xB0, 0x54, 60, 0x90, 64, 110]);
+    let _ = rms_after(&mut e, 8_820);
+    // Only the retuned voice is sounding: lifting the ORIGINAL key must
+    // not silence it (its voice was re-keyed to 64), and lifting 64
+    // must.
+    send(&mut e, &[0x80, 60, 0]);
+    let still = rms_after(&mut e, 11_025);
+    send(&mut e, &[0x80, 64, 0]);
+    let _ = rms_after(&mut e, 44_100);
+    let gone = rms_after(&mut e, 11_025);
+    assert!(
+        still > gone * 2.0,
+        "the voice lives under the new key alone (still {still}, gone {gone})"
+    );
+}
