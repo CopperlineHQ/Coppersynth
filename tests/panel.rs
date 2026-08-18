@@ -243,10 +243,10 @@ fn monitor_solos_the_shown_part() {
     let activity = e.part_activity();
     assert!(activity[0] > 0.0, "the monitored part sounds");
     assert_eq!(activity[1], 0.0, "the other part is held");
+    // Any press stands the solo down on the way to its own meaning:
+    // the part moves, and the machine is listening to everything again.
     panel.button(&mut e, Button::Arrow(Pair::Part, Dir::Right));
-    assert_eq!(e.monitor(), Monitor::Solo(1), "the solo follows");
-    panel.button(&mut e, Button::Monitor);
-    assert_eq!(e.monitor(), Monitor::Off);
+    assert_eq!(e.monitor(), Monitor::Off, "the press ends the solo");
 }
 
 /// INSTRUMENT ◄ held through the power-on asks the MT-32 question,
@@ -720,4 +720,28 @@ fn the_part_parameter_editor_speaks_for_all_parts() {
     assert_eq!(panel.screen(&mut e, 4_000).part, "01");
     panel.button(&mut e, Button::Mute); // restore everything
     assert_eq!(e.part_cc_value(11, 0x05), 0, "the snapshot covers all");
+}
+
+/// A solo is a passing state: MUTE takes it back with the press
+/// spent, and any other button takes it back on the way to its own
+/// meaning.
+#[test]
+fn solo_stands_down_for_any_press() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    let mut panel = FrontPanel::default();
+    settled(&mut panel, &mut e);
+    panel.button(&mut e, Button::Monitor);
+    assert_ne!(e.monitor(), Monitor::Off, "the solo engages");
+    // MUTE lets it go, and mutes nothing.
+    panel.button(&mut e, Button::Mute);
+    assert_eq!(e.monitor(), Monitor::Off);
+    assert!(!e.part_muted(0), "the un-solo press is spent");
+    // Engaged again, ALL lets it go and still enters ALL mode.
+    panel.button(&mut e, Button::Monitor);
+    panel.button(&mut e, Button::All);
+    assert_eq!(e.monitor(), Monitor::Off, "any press stands the solo down");
+    assert_eq!(panel.screen(&mut e, 5_000).part, "ALL", "and means itself");
+    panel.button(&mut e, Button::All);
 }
