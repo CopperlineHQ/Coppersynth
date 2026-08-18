@@ -591,6 +591,15 @@ impl FrontPanel {
             self.message = None;
             return None;
         }
+        // A solo is a passing state: MUTE lets it go and the press is
+        // spent; any other button lets it go on the way to its own
+        // meaning, so the fascia is never stuck listening.
+        if engine.monitor() != Monitor::Off {
+            engine.set_monitor(Monitor::Off);
+            if matches!(b, Button::Mute | Button::Monitor) {
+                return None;
+            }
+        }
         match b {
             Button::All => self.all = !self.all,
             Button::Mute => self.press_mute(engine),
@@ -889,11 +898,9 @@ impl FrontPanel {
         let view = engine.part_view(part);
         match pair {
             Pair::Part => {
+                // Any press has already stood a solo down, so there is
+                // no monitor left to follow the selection.
                 self.part = (part as i32 + step(0)).rem_euclid(PARTS as i32) as usize;
-                // Monitoring follows the selection, as the unit's does.
-                if let Monitor::Solo(_) = engine.monitor() {
-                    engine.set_monitor(Monitor::Solo(self.part));
-                }
             }
             Pair::Instrument => {
                 let next = if view.drums {
