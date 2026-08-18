@@ -648,3 +648,54 @@ fn the_chorus_type_edit_names_types_and_commits() {
     panel.button(&mut e, Button::Mute);
     assert_eq!(e.chorus_type().index(), 6, "MUTE restores the original");
 }
+
+/// MUTE latched under an INSTRUMENT arrow opens the part-parameter
+/// editor: INSTRUMENT arrows browse, LEVEL arrows set 0-127 sounding
+/// at once, PART arrows move between parts, ALL keeps the lot and
+/// MUTE puts the whole snapshot back.
+#[test]
+fn the_part_parameter_editor_browses_audits_and_restores() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    let mut panel = FrontPanel::default();
+    settled(&mut panel, &mut e);
+    panel.button(&mut e, Button::MuteArrow(Pair::Instrument, Dir::Right));
+    let screen = panel.screen(&mut e, 4_000);
+    assert_eq!(screen.name, "Portamento Time: 0");
+    assert_eq!(screen.part, "01");
+    assert!(screen.all_led && screen.mute_led, "the lamps flash on");
+    // LEVEL edits the value, live.
+    for _ in 0..3 {
+        panel.button(&mut e, Button::Arrow(Pair::Level, Dir::Right));
+    }
+    assert_eq!(panel.screen(&mut e, 4_000).name, "Portamento Time: 3");
+    assert_eq!(e.part_cc_value(0, 0x05), 3, "the edit sounds at once");
+    // INSTRUMENT browses the settings.
+    panel.button(&mut e, Button::Arrow(Pair::Instrument, Dir::Right));
+    assert_eq!(panel.screen(&mut e, 4_000).name, "Portamento: 0");
+    // PART moves the whole view to another part.
+    panel.button(&mut e, Button::Arrow(Pair::Part, Dir::Right));
+    assert_eq!(panel.screen(&mut e, 4_000).part, "02");
+    for _ in 0..6 {
+        panel.button(&mut e, Button::Arrow(Pair::Instrument, Dir::Right));
+    }
+    assert_eq!(panel.screen(&mut e, 4_000).name, "Cutoff: 64");
+    panel.button(&mut e, Button::Arrow(Pair::Level, Dir::Left));
+    assert_eq!(e.part_nrpn_wire(1, 0x01, 0x20), 63, "the NRPN lands");
+    // MUTE restores everything the audition touched, on every part.
+    panel.button(&mut e, Button::Mute);
+    assert_eq!(e.part_cc_value(0, 0x05), 0, "portamento time restored");
+    assert_eq!(e.part_nrpn_wire(1, 0x01, 0x20), 64, "cutoff restored");
+    // ALL keeps what the audition set. The editor kept part 2 selected
+    // from the browse above, so the edit lands there.
+    panel.button(&mut e, Button::MuteArrow(Pair::Instrument, Dir::Left));
+    panel.button(&mut e, Button::Arrow(Pair::Level, Dir::Right));
+    panel.button(&mut e, Button::All);
+    assert_eq!(e.part_cc_value(1, 0x05), 1, "ALL keeps the edit");
+    assert_eq!(
+        panel.screen(&mut e, 4_000).name,
+        "Part params kept",
+        "the notice"
+    );
+}

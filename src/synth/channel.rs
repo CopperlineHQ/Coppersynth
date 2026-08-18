@@ -396,6 +396,23 @@ impl Channel {
         }
     }
 
+    /// A GS NRPN's stored value back in wire terms, for the fascia's
+    /// editor (relative parameters read 64 at neutral).
+    pub(crate) fn nrpn_wire_value(&self, msb: u8, lsb: u8) -> u8 {
+        let rel = |off: i32| (off + 64).clamp(0, 127) as u8;
+        match (msb, lsb) {
+            (0x01, 0x08) => rel(self.vib_rate_off),
+            (0x01, 0x09) => rel(self.vib_depth_off),
+            (0x01, 0x0A) => rel(self.vib_delay_off),
+            (0x01, 0x20) => rel(self.cutoff_off),
+            (0x01, 0x21) => rel(self.resonance_off),
+            (0x01, 0x63) => rel(self.eg_attack_off),
+            (0x01, 0x64) => rel(self.eg_decay_off),
+            (0x01, 0x66) => rel(self.eg_release_off),
+            _ => 64,
+        }
+    }
+
     /// Vibrato rate as a frequency factor (about +/-4x at the ends).
     pub(crate) fn nrpn_vib_rate_factor(&self) -> f32 {
         (2_f32).powf(self.vib_rate_off as f32 / 25.0)

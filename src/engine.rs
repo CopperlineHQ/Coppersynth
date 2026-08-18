@@ -652,6 +652,34 @@ impl Engine {
         }
     }
 
+    /// A raw controller value as the part last received it, for the
+    /// fascia's part-parameter editor.
+    pub fn part_cc_value(&self, part: usize, controller: u8) -> u8 {
+        self.synth.channel_cc(part, controller).unwrap_or(0)
+    }
+
+    /// A GS NRPN's current value in wire terms (relative parameters
+    /// read 64 at neutral), for the same editor.
+    pub fn part_nrpn_wire(&self, part: usize, msb: u8, lsb: u8) -> u8 {
+        self.synth.channel_nrpn_wire(part as i32, msb, lsb)
+    }
+
+    /// Send one controller to a part from the fascia, exactly as the
+    /// wire would.
+    pub fn send_part_cc(&mut self, part: usize, controller: u8, value: u8) {
+        self.part_cc(part, controller, value);
+    }
+
+    /// Send a GS NRPN to a part from the fascia: select, data entry,
+    /// then the null the manual recommends.
+    pub fn send_part_nrpn(&mut self, part: usize, msb: u8, lsb: u8, value: u8) {
+        self.part_cc(part, 0x63, msb);
+        self.part_cc(part, 0x62, lsb);
+        self.part_cc(part, 0x06, value);
+        self.part_cc(part, 0x65, 0x7F);
+        self.part_cc(part, 0x64, 0x7F);
+    }
+
     fn part_cc(&mut self, part: usize, controller: u8, value: u8) {
         self.synth.process_midi_message(
             part as i32,

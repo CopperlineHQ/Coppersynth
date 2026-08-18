@@ -709,6 +709,15 @@ impl Synthesizer {
         self.master_chorus_gain
     }
 
+    /// A channel's GS NRPN value in wire terms (64 = neutral for the
+    /// relative parameters).
+    pub fn channel_nrpn_wire(&self, channel: i32, msb: u8, lsb: u8) -> u8 {
+        self.channels
+            .get(channel as usize)
+            .map(|c| c.nrpn_wire_value(msb, lsb))
+            .unwrap_or(64)
+    }
+
     /// The chorus character in force.
     pub fn chorus_type(&self) -> ChorusType {
         self.chorus_type
