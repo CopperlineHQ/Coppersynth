@@ -7,7 +7,7 @@ use coppersynth::engine::{Engine, DRUM_PART, PARTS};
 use coppersynth::mt32::translator::Mt32Mode;
 
 fn engine(mode: Mt32Mode) -> Option<Engine> {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../assets/GeneralUser-GS.sf2");
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/GeneralUser-GS.sf2");
     if !std::path::Path::new(path).is_file() {
         return None;
     }
@@ -335,11 +335,44 @@ fn reverb_and_chorus_are_audible() {
         wet_ring > dry_ring * 5.0 && mid_ring > dry_ring * 2.0,
         "the room rings after the hit, more the more send"
     );
-    let (chorus_held, _) = probe(0, 127);
-    assert!(
-        chorus_held > dry_held * 1.1,
-        "full chorus thickens the note audibly"
-    );
+    // Chorus is a doubled, detuned voice, not a louder one: an 18 ms
+    // wet copy barely moves a held note's RMS (the old 2 ms comb summed
+    // coherently and did, which is what the previous assertion leaned
+    // on). What proves the send is alive is wet content: the difference
+    // between the chorus-off and chorus-full renders of the same
+    // sustained note.
+    let strings = |chorus: u8| -> Vec<(f32, f32)> {
+        let Some(mut e) = engine(Mt32Mode::Off) else {
+            return Vec::new();
+        };
+        e.set_part_chorus(0, chorus);
+        send(&mut e, &[0xC0, 48, 0x90, 60, 110]);
+        let mut out = vec![(0.0f32, 0.0f32); 44_100];
+        e.render(&mut out);
+        out
+    };
+    let (c0, c127) = (strings(0), strings(127));
+    if !c0.is_empty() {
+        let dry = rms_of(&c0);
+        let wet = diff_rms_of(&c0, &c127);
+        assert!(
+            wet > dry * 0.25,
+            "full chorus must put real wet under the note (wet {wet}, dry {dry})"
+        );
+    }
+}
+
+fn rms_of(buf: &[(f32, f32)]) -> f32 {
+    (buf.iter().map(|&(l, r)| l * l + r * r).sum::<f32>() / (2.0 * buf.len() as f32)).sqrt()
+}
+
+fn diff_rms_of(a: &[(f32, f32)], b: &[(f32, f32)]) -> f32 {
+    (a.iter()
+        .zip(b)
+        .map(|(&(al, ar), &(bl, br))| (al - bl) * (al - bl) + (ar - br) * (ar - br))
+        .sum::<f32>()
+        / (2.0 * a.len() as f32))
+        .sqrt()
 }
 
 /// The bundled bank is really in there: no files, no configuration,
@@ -393,13 +426,14 @@ fn the_chorus_actually_swims() {
         }
         best.0
     };
-    // Half the 0.4 Hz LFO period apart, the delay should have swum a
-    // long way between its extremes.
-    let early = best_lag(44_100);
-    let late = best_lag(44_100 + 55_125);
+    // Across a couple of LFO periods the delay swims between its
+    // extremes; probing several instants (the observable lag aliases
+    // against the organ's own pitch period) must find a wide spread.
+    let lags: Vec<isize> = (0..8).map(|i| best_lag(44_100 + i * 11_025)).collect();
+    let spread = lags.iter().max().unwrap() - lags.iter().min().unwrap();
     assert!(
-        (early - late).abs() > 40,
-        "the chorus delay must drift with its LFO: {early} vs {late}"
+        spread > 40,
+        "the chorus delay must drift with its LFO: {lags:?}"
     );
 }
 
@@ -452,4 +486,267 @@ fn mt32_traffic_selects_the_cm64_kit() {
     send(&mut e, &[0xF0, 0x7E, 0x7F, 0x09, 0x01, 0xF7]);
     assert!(!e.translating());
     assert_eq!(e.part_view(DRUM_PART).instrument, 0, "Standard is back");
+}
+
+/// A window of rendered audio, for before/after comparisons.
+fn rms_after(e: &mut Engine, frames: usize) -> f32 {
+    let mut out = vec![(0.0f32, 0.0f32); frames];
+    e.render(&mut out);
+    (out.iter().map(|&(l, r)| l * l + r * r).sum::<f32>() / (2.0 * out.len() as f32)).sqrt()
+}
+
+/// CC66 catches the notes sounding when it goes down and holds their
+/// release; a note struck afterwards is never caught.
+#[test]
+fn sostenuto_holds_what_it_caught() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    send(&mut e, &[0xC0, 48, 0x90, 60, 110]);
+    let _ = rms_after(&mut e, 4_410);
+    send(&mut e, &[0xB0, 0x42, 127]); // sostenuto down on the sounding note
+    send(&mut e, &[0x90, 67, 110]); // struck under the pedal: not caught
+    let _ = rms_after(&mut e, 4_410);
+    send(&mut e, &[0x80, 60, 0, 0x80, 67, 0]);
+    let held = rms_after(&mut e, 22_050);
+    // The caught note is still singing well after both keys lifted.
+    let Some(mut dry) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    send(&mut dry, &[0xC0, 48, 0x90, 60, 110]);
+    let _ = rms_after(&mut dry, 8_820);
+    send(&mut dry, &[0x80, 60, 0]);
+    let released = rms_after(&mut dry, 22_050);
+    assert!(
+        held > released * 2.0,
+        "sostenuto must hold its notes (held {held}, released {released})"
+    );
+    // Pedal up: the caught note lets go and the tail dies away.
+    send(&mut e, &[0xB0, 0x42, 0]);
+    let _ = rms_after(&mut e, 44_100);
+    let after = rms_after(&mut e, 11_025);
+    assert!(
+        after < held * 0.5,
+        "pedal up must release the caught note (after {after}, held {held})"
+    );
+}
+
+/// CC67 softens the hammer: a note struck under the pedal is quieter
+/// than the same note without it, and stays soft for its whole life.
+#[test]
+fn the_soft_pedal_quiets_struck_notes() {
+    let strike = |soft: bool| -> f32 {
+        let Some(mut e) = engine(Mt32Mode::Off) else {
+            return -1.0;
+        };
+        send(&mut e, &[0xC0, 0]);
+        if soft {
+            send(&mut e, &[0xB0, 0x43, 127]);
+        }
+        send(&mut e, &[0x90, 60, 110]);
+        rms_after(&mut e, 22_050)
+    };
+    let (loud, soft) = (strike(false), strike(true));
+    if loud < 0.0 {
+        return;
+    }
+    assert!(
+        soft > loud * 0.4 && soft < loud * 0.8,
+        "the soft pedal takes about 4 dB (loud {loud}, soft {soft})"
+    );
+}
+
+/// CC126 makes the channel monophonic: the arriving note releases the
+/// one before it, and CC127 gives polyphony back.
+#[test]
+fn mono_mode_gives_one_voice_at_a_time() {
+    let tail = |mono: bool| -> f32 {
+        let Some(mut e) = engine(Mt32Mode::Off) else {
+            return -1.0;
+        };
+        send(&mut e, &[0xC0, 48]);
+        if mono {
+            send(&mut e, &[0xB0, 0x7E, 1]);
+        }
+        send(&mut e, &[0x90, 48, 110]);
+        let _ = rms_after(&mut e, 8_820);
+        send(&mut e, &[0x90, 72, 110]);
+        let _ = rms_after(&mut e, 8_820);
+        // Lift only the second note: in mono the first is already gone
+        // and the channel falls silent; in poly it still sings.
+        send(&mut e, &[0x80, 72, 0]);
+        let _ = rms_after(&mut e, 22_050);
+        rms_after(&mut e, 11_025)
+    };
+    let (poly, mono) = (tail(false), tail(true));
+    if poly < 0.0 {
+        return;
+    }
+    assert!(
+        mono < poly * 0.4,
+        "mono must have released the first note (mono {mono}, poly {poly})"
+    );
+}
+
+/// CC121 resets the pedals with the rest of its table: a note the hold
+/// pedal was sustaining releases when the controllers reset.
+#[test]
+fn reset_all_controllers_lifts_the_pedals() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    send(&mut e, &[0xC0, 48, 0xB0, 0x40, 127, 0x90, 60, 110]);
+    let _ = rms_after(&mut e, 8_820);
+    send(&mut e, &[0x80, 60, 0]);
+    let held = rms_after(&mut e, 22_050);
+    send(&mut e, &[0xB0, 0x79, 0]);
+    let _ = rms_after(&mut e, 44_100);
+    let after = rms_after(&mut e, 11_025);
+    assert!(
+        after < held * 0.5,
+        "the reset lifts the hold pedal (after {after}, held {held})"
+    );
+}
+
+/// Portamento bends the pitch in from the note before: the glide's
+/// early audio differs from a straight strike of the same note, and
+/// settles onto it by the end.
+#[test]
+fn portamento_glides_between_notes() {
+    let run = |portamento: bool| -> Option<Vec<(f32, f32)>> {
+        let mut e = engine(Mt32Mode::Off)?;
+        send(&mut e, &[0xC0, 80]); // square lead, a naked pitch
+        if portamento {
+            send(&mut e, &[0xB0, 0x41, 127, 0xB0, 0x05, 64]);
+        }
+        send(&mut e, &[0x90, 48, 110]);
+        let mut warm = vec![(0.0f32, 0.0f32); 8_820];
+        e.render(&mut warm);
+        send(&mut e, &[0x80, 48, 0, 0x90, 72, 110]);
+        let mut out = vec![(0.0f32, 0.0f32); 44_100];
+        e.render(&mut out);
+        Some(out)
+    };
+    let (Some(straight), Some(glide)) = (run(false), run(true)) else {
+        return;
+    };
+    let head_diff = diff_rms_of(&straight[..8_820], &glide[..8_820]);
+    let head_level = rms_of(&straight[..8_820]);
+    assert!(
+        head_diff > head_level * 0.3,
+        "the glide's opening must sit away from the target pitch \
+         (diff {head_diff}, level {head_level})"
+    );
+}
+
+/// Portamento Control re-tunes a sounding voice without re-striking:
+/// the legato render carries no second attack.
+#[test]
+fn portamento_control_retunes_legato() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    send(&mut e, &[0xC0, 80, 0x90, 60, 110]);
+    let _ = rms_after(&mut e, 8_820);
+    // CC84 from C4, then the E above: the voice re-tunes, no new strike.
+    send(&mut e, &[0xB0, 0x54, 60, 0x90, 64, 110]);
+    let _ = rms_after(&mut e, 8_820);
+    // Only the retuned voice is sounding: lifting the ORIGINAL key must
+    // not silence it (its voice was re-keyed to 64), and lifting 64
+    // must.
+    send(&mut e, &[0x80, 60, 0]);
+    let still = rms_after(&mut e, 11_025);
+    send(&mut e, &[0x80, 64, 0]);
+    let _ = rms_after(&mut e, 44_100);
+    let gone = rms_after(&mut e, 11_025);
+    assert!(
+        still > gone * 2.0,
+        "the voice lives under the new key alone (still {still}, gone {gone})"
+    );
+}
+
+/// Select an NRPN and send its data-entry MSB.
+fn nrpn(e: &mut Engine, msb: u8, lsb: u8, value: u8) {
+    send(e, &[0xB0, 0x63, msb, 0xB0, 0x62, lsb, 0xB0, 0x06, value]);
+}
+
+/// NRPN 01 20 closes the filter: the note's waveform reshapes against
+/// the untouched render (total loudness barely moves on a low note, so
+/// the difference is the honest meter).
+#[test]
+fn nrpn_cutoff_closes_the_filter() {
+    let run = |cutoff: Option<u8>| -> Option<Vec<(f32, f32)>> {
+        let mut e = engine(Mt32Mode::Off)?;
+        send(&mut e, &[0xC0, 80]);
+        if let Some(v) = cutoff {
+            nrpn(&mut e, 0x01, 0x20, v);
+        }
+        send(&mut e, &[0x90, 60, 110]);
+        let mut out = vec![(0.0f32, 0.0f32); 22_050];
+        e.render(&mut out);
+        Some(out)
+    };
+    let (Some(open), Some(closed)) = (run(None), run(Some(14))) else {
+        return;
+    };
+    let level = rms_of(&open);
+    let reshaped = diff_rms_of(&open, &closed);
+    assert!(
+        reshaped > level * 0.1,
+        "a -50 cutoff must reshape the note (diff {reshaped}, level {level})"
+    );
+}
+
+/// NRPN 1A rr silences one drum instrument and leaves its neighbours.
+#[test]
+fn nrpn_drum_level_is_per_note() {
+    let run = |quiet_snare: bool| -> Option<(f32, f32)> {
+        let mut e = engine(Mt32Mode::Off)?;
+        if quiet_snare {
+            nrpn_ch9(&mut e, 0x1A, 38, 0);
+        }
+        send(&mut e, &[0x99, 38, 120]); // snare
+        let snare = rms_after(&mut e, 11_025);
+        send(&mut e, &[0x99, 42, 120]); // closed hat, untouched
+        let hat = rms_after(&mut e, 11_025);
+        Some((snare, hat))
+    };
+    let (Some((snare, hat)), Some((quiet, hat2))) = (run(false), run(true)) else {
+        return;
+    };
+    assert!(
+        quiet < snare * 0.2,
+        "level 0 silences the snare (was {snare}, now {quiet})"
+    );
+    assert!(
+        hat2 > hat * 0.5,
+        "the hat keeps its voice (was {hat}, now {hat2})"
+    );
+}
+
+fn nrpn_ch9(e: &mut Engine, msb: u8, lsb: u8, value: u8) {
+    send(e, &[0xB9, 0x63, msb, 0xB9, 0x62, lsb, 0xB9, 0x06, value]);
+}
+
+/// NRPN 01 66 stretches and shrinks the release: after the key lifts,
+/// a +50 release rings far longer than a -50 one.
+#[test]
+fn nrpn_release_time_scales_the_tail() {
+    let tail = |release: u8| -> Option<f32> {
+        let mut e = engine(Mt32Mode::Off)?;
+        send(&mut e, &[0xC0, 48]);
+        nrpn(&mut e, 0x01, 0x66, release);
+        send(&mut e, &[0x90, 60, 110]);
+        let _ = rms_after(&mut e, 22_050);
+        send(&mut e, &[0x80, 60, 0]);
+        let _ = rms_after(&mut e, 11_025);
+        Some(rms_after(&mut e, 11_025))
+    };
+    let (Some(short), Some(long)) = (tail(14), tail(114)) else {
+        return;
+    };
+    assert!(
+        long > short * 1.5,
+        "a stretched release rings longer (short {short}, long {long})"
+    );
 }

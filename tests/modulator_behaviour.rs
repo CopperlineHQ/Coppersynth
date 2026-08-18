@@ -39,8 +39,7 @@ fn zcr(s: &[f32]) -> f32 {
 
 #[test]
 fn velocity_opens_the_synth_bass_filter() {
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/GeneralUser-GS.sf2");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/GeneralUser-GS.sf2");
     let Ok(mut file) = File::open(path) else {
         return;
     };
@@ -75,8 +74,7 @@ fn velocity_opens_the_synth_bass_filter() {
 /// not introduce any nondeterminism.
 #[test]
 fn modulated_rendering_stays_deterministic() {
-    let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/GeneralUser-GS.sf2");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/GeneralUser-GS.sf2");
     let Ok(mut file) = File::open(path) else {
         return;
     };

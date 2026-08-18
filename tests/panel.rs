@@ -7,7 +7,7 @@ use coppersynth::engine::{Engine, Monitor, Mt32Mode, DRUM_PART};
 use coppersynth::panel::{Button, Dir, FrontPanel, Pair, PanelRequest};
 
 fn engine(mode: Mt32Mode) -> Option<Engine> {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../assets/GeneralUser-GS.sf2");
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/GeneralUser-GS.sf2");
     if !std::path::Path::new(path).is_file() {
         return None;
     }
@@ -184,7 +184,7 @@ fn all_mode_broadcasts_to_every_part() {
     let bank: String = e.bank_name().chars().take(20).collect();
     assert_eq!(screen.name, bank, "ALL introduces the loaded bank");
     assert_eq!(screen.level, "127");
-    assert_eq!(screen.midi_ch, "17", "the factory device ID");
+    assert_eq!(screen.midi_ch, "---", "no channel speaks for all parts");
     panel.button(&mut e, Button::Arrow(Pair::Level, Dir::Left));
     panel.button(&mut e, Button::Arrow(Pair::KeyShift, Dir::Right));
     for p in [0, 7, 15] {
@@ -198,7 +198,7 @@ fn all_mode_broadcasts_to_every_part() {
     // The MIDI CH pair sits inert in ALL mode: no channel speaks for
     // sixteen parts, and the read-out says so with dashes.
     panel.button(&mut e, Button::Arrow(Pair::MidiCh, Dir::Left));
-    assert_eq!(e.device_id(), 16, "the device ID is not a fascia setting");
+    assert_eq!(e.device_id(), 17, "the device ID is not a fascia setting");
     assert_eq!(panel.screen(&mut e, 4_000).midi_ch, "---");
 }
 
@@ -577,4 +577,147 @@ fn the_boot_line_wears_dashes() {
     assert_eq!(greeting.level, "---");
     assert_eq!(greeting.midi_ch, "---");
     assert_eq!(panel.screen(&mut e, 3_100).level, "127", "and home again");
+}
+
+/// MUTE latched under a MIDI CH arrow opens the Device ID edit: the
+/// arrows cycle 1-32, ALL commits, MUTE cancels -- the mkII's own
+/// panel operation in this unit's grammar.
+#[test]
+fn the_device_id_edit_cycles_commits_and_cancels() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    let mut panel = FrontPanel::default();
+    settled(&mut panel, &mut e);
+    panel.button(&mut e, Button::MuteArrow(Pair::MidiCh, Dir::Right));
+    let screen = panel.screen(&mut e, 4_000);
+    assert_eq!(screen.name, "Device ID: 17", "seeded on the factory ID");
+    assert!(screen.all_led && screen.mute_led, "the lamps flash on");
+    panel.button(&mut e, Button::Arrow(Pair::MidiCh, Dir::Right));
+    assert_eq!(panel.screen(&mut e, 4_000).name, "Device ID: 18");
+    // Wraps: 18 left to 17, 16 ... down past 1 comes round to 32.
+    for _ in 0..18 {
+        panel.button(&mut e, Button::Arrow(Pair::MidiCh, Dir::Left));
+    }
+    assert_eq!(panel.screen(&mut e, 4_000).name, "Device ID: 32");
+    panel.button(&mut e, Button::All);
+    assert_eq!(e.device_id(), 32, "ALL commits the pending value");
+    assert_eq!(
+        panel.screen(&mut e, 4_000).name,
+        "Device ID 32",
+        "the notice"
+    );
+    // Cancel leaves the ID alone.
+    panel.button(&mut e, Button::MuteArrow(Pair::MidiCh, Dir::Left));
+    panel.button(&mut e, Button::Arrow(Pair::MidiCh, Dir::Right));
+    panel.button(&mut e, Button::Mute);
+    assert_eq!(e.device_id(), 32, "MUTE cancels");
+}
+
+/// MUTE latched under a CHORUS arrow opens the Chorus Type edit: 0-8
+/// with the type's name on the second line, ALL commits, MUTE cancels.
+#[test]
+fn the_chorus_type_edit_names_types_and_commits() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    let mut panel = FrontPanel::default();
+    settled(&mut panel, &mut e);
+    panel.button(&mut e, Button::MuteArrow(Pair::Chorus, Dir::Right));
+    let screen = panel.screen(&mut e, 4_000);
+    assert_eq!(screen.name, "Chorus Type: 2", "the unit wakes in Chorus 2");
+    assert_eq!(screen.subtitle, "Chorus 2");
+    for _ in 0..4 {
+        panel.button(&mut e, Button::Arrow(Pair::Chorus, Dir::Right));
+    }
+    let screen = panel.screen(&mut e, 4_000);
+    assert_eq!(screen.name, "Chorus Type: 6");
+    assert_eq!(screen.subtitle, "Flanger");
+    // The selection is already sounding for the audition.
+    assert_eq!(e.chorus_type().index(), 6, "cycling activates at once");
+    panel.button(&mut e, Button::All);
+    assert_eq!(e.chorus_type().index(), 6, "ALL keeps the type");
+    // Cancel puts the original back, even after auditioning another;
+    // 0 is Off and stays selectable.
+    panel.button(&mut e, Button::MuteArrow(Pair::Chorus, Dir::Left));
+    for _ in 0..6 {
+        panel.button(&mut e, Button::Arrow(Pair::Chorus, Dir::Left));
+    }
+    assert_eq!(panel.screen(&mut e, 4_000).subtitle, "Off");
+    assert_eq!(e.chorus_type().index(), 0, "the audition sounds Off");
+    panel.button(&mut e, Button::Mute);
+    assert_eq!(e.chorus_type().index(), 6, "MUTE restores the original");
+}
+
+/// MUTE latched under an INSTRUMENT arrow opens the part-parameter
+/// editor: INSTRUMENT arrows browse, LEVEL arrows set 0-127 sounding
+/// at once, PART arrows move between parts, ALL keeps the lot and
+/// MUTE puts the whole snapshot back.
+#[test]
+fn the_part_parameter_editor_browses_audits_and_restores() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    let mut panel = FrontPanel::default();
+    settled(&mut panel, &mut e);
+    panel.button(&mut e, Button::MuteArrow(Pair::Instrument, Dir::Right));
+    let screen = panel.screen(&mut e, 4_000);
+    assert_eq!(screen.name, "Portamento Time: 0");
+    assert_eq!(screen.part, "01");
+    assert!(screen.all_led && screen.mute_led, "the lamps flash on");
+    // LEVEL edits the value, live.
+    for _ in 0..3 {
+        panel.button(&mut e, Button::Arrow(Pair::Level, Dir::Right));
+    }
+    assert_eq!(panel.screen(&mut e, 4_000).name, "Portamento Time: 3");
+    assert_eq!(e.part_cc_value(0, 0x05), 3, "the edit sounds at once");
+    // INSTRUMENT browses the settings.
+    panel.button(&mut e, Button::Arrow(Pair::Instrument, Dir::Right));
+    assert_eq!(panel.screen(&mut e, 4_000).name, "Portamento: 0");
+    // PART moves the whole view to another part.
+    panel.button(&mut e, Button::Arrow(Pair::Part, Dir::Right));
+    assert_eq!(panel.screen(&mut e, 4_000).part, "02");
+    for _ in 0..6 {
+        panel.button(&mut e, Button::Arrow(Pair::Instrument, Dir::Right));
+    }
+    assert_eq!(panel.screen(&mut e, 4_000).name, "Cutoff: 64");
+    panel.button(&mut e, Button::Arrow(Pair::Level, Dir::Left));
+    assert_eq!(e.part_nrpn_wire(1, 0x01, 0x20), 63, "the NRPN lands");
+    // MUTE restores everything the audition touched, on every part.
+    panel.button(&mut e, Button::Mute);
+    assert_eq!(e.part_cc_value(0, 0x05), 0, "portamento time restored");
+    assert_eq!(e.part_nrpn_wire(1, 0x01, 0x20), 64, "cutoff restored");
+    // ALL keeps what the audition set. The editor kept part 2 selected
+    // from the browse above, so the edit lands there.
+    panel.button(&mut e, Button::MuteArrow(Pair::Instrument, Dir::Left));
+    panel.button(&mut e, Button::Arrow(Pair::Level, Dir::Right));
+    panel.button(&mut e, Button::All);
+    assert_eq!(e.part_cc_value(1, 0x05), 1, "ALL keeps the edit");
+    assert_eq!(
+        panel.screen(&mut e, 4_000).name,
+        "Part params saved",
+        "the notice"
+    );
+}
+
+/// Entered with ALL lit, the part-parameter editor writes every part
+/// at once and says so; a PART press snaps back to the single part.
+#[test]
+fn the_part_parameter_editor_speaks_for_all_parts() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    let mut panel = FrontPanel::default();
+    settled(&mut panel, &mut e);
+    panel.button(&mut e, Button::All); // ALL mode first
+    panel.button(&mut e, Button::MuteArrow(Pair::Instrument, Dir::Right));
+    assert_eq!(panel.screen(&mut e, 4_000).part, "ALL");
+    panel.button(&mut e, Button::Arrow(Pair::Level, Dir::Right));
+    assert_eq!(e.part_cc_value(0, 0x05), 1, "part 1 took the edit");
+    assert_eq!(e.part_cc_value(11, 0x05), 1, "part 12 took it too");
+    // PART snaps out of ALL and back to the selected part.
+    panel.button(&mut e, Button::Arrow(Pair::Part, Dir::Right));
+    assert_eq!(panel.screen(&mut e, 4_000).part, "01");
+    panel.button(&mut e, Button::Mute); // restore everything
+    assert_eq!(e.part_cc_value(11, 0x05), 0, "the snapshot covers all");
 }

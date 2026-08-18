@@ -11,6 +11,9 @@ use crate::synth::modulator::{Modulator, DEFAULT_VEL_TO_ATTENUATION};
 use crate::synth::oscillator::Oscillator;
 use crate::synth::region_ex::RegionEx;
 use crate::synth::region_pair::RegionPair;
+
+/// The soft pedal's attenuation on notes struck under it (about -4 dB).
+const SOFT_PEDAL_GAIN: f32 = 0.63;
 use crate::synth::soundfont_math::SoundFontMath;
 use crate::synth::synthesizer_settings::SynthesizerSettings;
 use crate::synth::volume_envelope::VolumeEnvelope;
@@ -47,6 +50,19 @@ pub(crate) struct Voice {
     pub(crate) current_mix_gain_right: f32,
 
     pub(crate) previous_reverb_send: f32,
+    /// Caught by the sostenuto pedal: release waits for the pedal even
+    /// after the key (or the hold pedal) lets go.
+    sostenuto_held: bool,
+    /// Struck under the soft pedal: the note keeps its softened voice
+    /// for its whole life, as a softened hammer would.
+    soft_struck: bool,
+    /// A drum note's per-note pitch offset (NRPN 18 rr), in semitones.
+    drum_pitch: f32,
+    /// The portamento glide still to travel, in semitones, decaying
+    /// toward zero block by block.
+    glide_offset: f32,
+    /// The per-block decay the synthesizer derived from CC5.
+    glide_decay: f32,
     pub(crate) previous_chorus_send: f32,
     pub(crate) current_reverb_send: f32,
     pub(crate) current_chorus_send: f32,
@@ -129,6 +145,11 @@ impl Voice {
             current_mix_gain_left: 0_f32,
             current_mix_gain_right: 0_f32,
             previous_reverb_send: 0_f32,
+            sostenuto_held: false,
+            soft_struck: false,
+            drum_pitch: 0_f32,
+            glide_offset: 0_f32,
+            glide_decay: 1_f32,
             previous_chorus_send: 0_f32,
             current_reverb_send: 0_f32,
             current_chorus_send: 0_f32,
@@ -168,11 +189,49 @@ impl Voice {
         }
     }
 
-    pub(crate) fn start(&mut self, region: &RegionPair, channel: i32, key: i32, velocity: i32) {
+    pub(crate) fn set_sostenuto_held(&mut self, held: bool) {
+        self.sostenuto_held = held;
+    }
+
+    /// Begin this voice gliding in from another key (portamento, or a
+    /// Portamento Control message ahead of the note).
+    pub(crate) fn glide_from(&mut self, source_key: i32, decay_per_block: f32) {
+        self.glide_offset = source_key as f32 - self.key as f32;
+        self.glide_decay = decay_per_block;
+    }
+
+    /// Portamento Control onto a sounding voice: re-tune to the new
+    /// key, gliding from wherever the pitch is now, without
+    /// re-triggering -- the manual's legato case.
+    pub(crate) fn retune_to(&mut self, new_key: i32, decay_per_block: f32) {
+        self.glide_offset += self.key as f32 - new_key as f32;
+        self.key = new_key;
+        self.glide_decay = decay_per_block;
+    }
+
+    /// Still held down: neither the key nor a pedal has asked for the
+    /// release yet.
+    pub(crate) fn is_sounding(&self) -> bool {
+        self.voice_state == VoiceState::Playing
+    }
+
+    pub(crate) fn start(
+        &mut self,
+        region: &RegionPair,
+        channel_info: &Channel,
+        channel: i32,
+        key: i32,
+        velocity: i32,
+    ) {
         self.exclusive_class = region.get_exclusive_class();
         self.channel = channel;
         self.key = key;
         self.velocity = velocity;
+        // A voice from the pool must not inherit the last note's pedals.
+        self.sostenuto_held = false;
+        self.soft_struck = false;
+        self.glide_offset = 0_f32;
+        self.glide_decay = 1_f32;
 
         // The bank's modulators for this note: the instrument level, which
         // superseded the defaults where it names their routing, and the
@@ -273,6 +332,13 @@ impl Voice {
             self.note_gain = 0_f32;
         }
 
+        // The channel's GS tone modifies ride the same static
+        // accumulators the bank's modulators use, folded in before the
+        // filter and vibrato derive from them.
+        static_cutoff_cents += channel_info.nrpn_cutoff_cents();
+        static_q_cb += channel_info.nrpn_resonance_cb();
+        static_vib_lfo_pitch += channel_info.nrpn_vib_depth_cents();
+
         // The filter's base is kept in cents so modulator contributions,
         // which arrive in cents, compose with the LFO and envelope paths.
         self.base_cutoff_cents = region.gen_sum(GeneratorType::INITIAL_FILTER_CUTOFF_FREQUENCY)
@@ -303,6 +369,13 @@ impl Voice {
             region.get_modulation_lfo_to_volume() + 0.1_f32 * static_mod_lfo_volume;
         self.dynamic_volume = self.mod_lfo_to_volume > 0.05_f32;
 
+        // A drum note's own place and pitch, when its part set them.
+        self.drum_pitch = channel_info.drum_pitch_semitones(key);
+        self.note_gain *= channel_info.drum_level_gain(key);
+        if let Some(pan) = channel_info.drum_pan_override(key, velocity) {
+            static_pan = 10.0 * (pan - region.get_pan());
+        }
+
         self.instrument_pan =
             SoundFontMath::clamp(region.get_pan() + 0.1_f32 * static_pan, -50_f32, 50_f32);
         self.instrument_reverb =
@@ -310,9 +383,17 @@ impl Voice {
         self.instrument_chorus =
             0.01_f32 * (region.get_chorus_effects_send() + 0.1_f32 * static_chorus);
 
-        RegionEx::start_volume_envelope(&mut self.vol_env, region, key, velocity);
+        let eg = channel_info.nrpn_eg_factors();
+        RegionEx::start_volume_envelope(&mut self.vol_env, region, key, velocity, eg);
         RegionEx::start_modulation_envelope(&mut self.mod_env, region, key, velocity);
-        RegionEx::start_vibrato(&mut self.vib_lfo, region, key, velocity);
+        RegionEx::start_vibrato(
+            &mut self.vib_lfo,
+            region,
+            key,
+            velocity,
+            channel_info.nrpn_vib_rate_factor(),
+            channel_info.nrpn_vib_delay_factor(),
+        );
         RegionEx::start_modulation(&mut self.mod_lfo, region, key, velocity);
         RegionEx::start_oscillator(
             &mut self.oscillator,
@@ -362,7 +443,18 @@ impl Voice {
         let mod_pitch_change = self.mod_lfo_to_pitch * self.mod_lfo.get_value()
             + self.mod_env_to_pitch * self.mod_env.get_value();
         let channel_pitch_change = channel_info.get_tune() + channel_info.get_pitch_bend();
-        let pitch = self.key as f32 + vib_pitch_change + mod_pitch_change + channel_pitch_change;
+        let pitch = self.key as f32
+            + self.drum_pitch
+            + self.glide_offset
+            + vib_pitch_change
+            + mod_pitch_change
+            + channel_pitch_change;
+        // The glide closes on the note exponentially; close enough is
+        // arrived.
+        self.glide_offset *= self.glide_decay;
+        if self.glide_offset.abs() < 0.005 {
+            self.glide_offset = 0_f32;
+        }
         if !self.oscillator.process(data, &mut self.block[..], pitch) {
             return false;
         }
@@ -389,11 +481,20 @@ impl Voice {
         self.previous_reverb_send = self.current_reverb_send;
         self.previous_chorus_send = self.current_chorus_send;
 
+        if self.voice_length == 0 && channel_info.get_soft_pedal() {
+            self.soft_struck = true;
+        }
+
         // According to the GM spec, the following value should be squared.
         let ve = channel_info.get_volume() * channel_info.get_expression();
         let channel_gain = ve * ve;
 
         let mut mix_gain = self.note_gain * channel_gain * self.vol_env.get_value();
+        if self.soft_struck {
+            // The soft pedal's quieter, rounder hammer: about -4 dB and
+            // a gently closed filter on notes struck while it is down.
+            mix_gain *= SOFT_PEDAL_GAIN;
+        }
         let mod_atten_cb = self.static_atten_cb + self.dyn_atten_cb;
         if mod_atten_cb != 0_f32 {
             // Attenuation modulators land in centibels and are scaled by
@@ -428,7 +529,7 @@ impl Voice {
             SoundFontMath::clamp(0.001_f32 * self.dyn_reverb, 0_f32, 1_f32)
         } else {
             SoundFontMath::clamp(
-                channel_info.get_reverb_send() + self.instrument_reverb,
+                channel_info.get_reverb_send_for(self.key) + self.instrument_reverb,
                 0_f32,
                 1_f32,
             )
@@ -437,7 +538,7 @@ impl Voice {
             SoundFontMath::clamp(0.001_f32 * self.dyn_chorus, 0_f32, 1_f32)
         } else {
             SoundFontMath::clamp(
-                channel_info.get_chorus_send() + self.instrument_chorus,
+                channel_info.get_chorus_send_for(self.key) + self.instrument_chorus,
                 0_f32,
                 1_f32,
             )
@@ -486,7 +587,10 @@ impl Voice {
             return;
         }
 
-        if self.voice_state == VoiceState::ReleaseRequested && !channel_info.get_hold_pedal() {
+        if self.voice_state == VoiceState::ReleaseRequested
+            && !channel_info.get_hold_pedal()
+            && !self.sostenuto_held
+        {
             self.vol_env.release();
             self.mod_env.release();
             self.oscillator.release();

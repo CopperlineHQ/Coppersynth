@@ -44,6 +44,9 @@ pub enum Button {
     Both(Pair),
     /// ALL and MUTE together: monitor.
     Monitor,
+    /// An arrow pressed with MUTE latched down: the service edits
+    /// (MIDI CH pair: device ID; CHORUS pair: chorus type).
+    MuteArrow(Pair, Dir),
 }
 
 /// Text or a picture the engine took off the wire for the display.
@@ -114,12 +117,77 @@ enum Mode {
     /// The undocumented screen: the credits roll until ALL or MUTE
     /// lets the boot carry on.
     Credits,
+    /// "Device ID: <n>" -- the MIDI CH arrows cycle 1-32, ALL commits,
+    /// MUTE cancels. Reached with MUTE latched and a MIDI CH arrow.
+    EditDeviceId {
+        pending: u8,
+    },
+    /// "Chorus Type: <n>" -- the CHORUS arrows cycle 0-8 and each
+    /// selection sounds at once for auditioning; ALL keeps it, MUTE
+    /// puts the original back. Reached with MUTE latched and a CHORUS
+    /// arrow.
+    EditChorusType {
+        pending: u8,
+        original: u8,
+    },
+    /// The part-parameter editor: INSTRUMENT arrows browse the
+    /// settings, LEVEL arrows set 0-127 (sounding at once), PART
+    /// arrows move between parts. ALL keeps everything, MUTE puts the
+    /// whole snapshot back.
+    EditPartParams {
+        param: usize,
+        all: bool,
+    },
     /// The unit playing to itself: ALL plays, MUTE stops, PART picks
     /// the song. Reached with both PART halves held through power-on.
     Demo {
         song: usize,
         playing: bool,
     },
+}
+
+/// The per-part parameters the fascia has no pair for -- the CC and
+/// GS-NRPN settings a game would drive over the wire -- browsable in
+/// the part-parameter editor (MUTE latched under an INSTRUMENT
+/// arrow). Every value is the wire's own 0-127; the relative tone
+/// modifies sit at 64 when neutral.
+const PART_PARAMS: [(&str, PartParam); 12] = [
+    ("Portamento Time", PartParam::Cc(0x05)),
+    ("Portamento", PartParam::Cc(0x41)),
+    ("Sostenuto", PartParam::Cc(0x42)),
+    ("Soft Pedal", PartParam::Cc(0x43)),
+    ("Vibrato Rate", PartParam::Nrpn(0x01, 0x08)),
+    ("Vibrato Depth", PartParam::Nrpn(0x01, 0x09)),
+    ("Vibrato Delay", PartParam::Nrpn(0x01, 0x0A)),
+    ("Cutoff", PartParam::Nrpn(0x01, 0x20)),
+    ("Resonance", PartParam::Nrpn(0x01, 0x21)),
+    ("EG Attack", PartParam::Nrpn(0x01, 0x63)),
+    ("EG Decay", PartParam::Nrpn(0x01, 0x64)),
+    ("EG Release", PartParam::Nrpn(0x01, 0x66)),
+];
+
+/// How a part parameter reaches the engine: a plain controller, or a
+/// GS NRPN by its select pair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PartParam {
+    Cc(u8),
+    Nrpn(u8, u8),
+}
+
+impl PartParam {
+    fn read(self, engine: &Engine, part: usize) -> u8 {
+        match self {
+            Self::Cc(cc) => engine.part_cc_value(part, cc),
+            Self::Nrpn(msb, lsb) => engine.part_nrpn_wire(part, msb, lsb),
+        }
+    }
+
+    fn write(self, engine: &mut Engine, part: usize, value: u8) {
+        match self {
+            Self::Cc(cc) => engine.send_part_cc(part, cc, value),
+            Self::Nrpn(msb, lsb) => engine.send_part_nrpn(part, msb, lsb, value),
+        }
+    }
 }
 
 /// A message on the name line.
@@ -191,6 +259,9 @@ pub struct FrontPanel {
     init_started: Option<u64>,
     /// When the credits started rolling, for their scroll clock.
     credits_started: Option<u64>,
+    /// Every part's parameters as they stood when the part-parameter
+    /// editor opened; MUTE restores the lot.
+    part_param_snapshot: Option<Box<[[u8; PART_PARAMS.len()]; PARTS]>>,
     message: Option<Message>,
     picture: Option<([u16; PARTS], Option<u64>)>,
     /// When the playing demo song ran out, while the gap rests.
@@ -211,6 +282,7 @@ impl Default for FrontPanel {
             boot_done: false,
             init_started: None,
             credits_started: None,
+            part_param_snapshot: None,
             message: None,
             picture: None,
             demo_ended: None,
@@ -263,6 +335,20 @@ impl FrontPanel {
         self.init_started = None;
     }
 
+    /// Whether an edit or confirm screen owns the glass -- the host
+    /// holds its latching gestures back while one does.
+    pub fn in_edit(&self) -> bool {
+        matches!(
+            self.mode,
+            Mode::ConfirmMt32
+                | Mode::ConfirmFont
+                | Mode::Initializing
+                | Mode::EditDeviceId { .. }
+                | Mode::EditChorusType { .. }
+                | Mode::EditPartParams { .. }
+        )
+    }
+
     /// A press. Anything the panel cannot mirror alone comes back as a
     /// request for the host.
     pub fn button(&mut self, engine: &mut Engine, b: Button) -> Option<PanelRequest> {
@@ -295,6 +381,153 @@ impl FrontPanel {
                 }
                 _ => None,
             };
+        }
+        // The service edits: the opening pair's arrows cycle the value,
+        // ALL commits, MUTE cancels, everything else waits.
+        if let Mode::EditDeviceId { pending } = self.mode {
+            match b {
+                Button::Arrow(Pair::MidiCh, dir) => {
+                    let step: i32 = if dir == Dir::Left { -1 } else { 1 };
+                    let next = (pending as i32 - 1 + step).rem_euclid(32) + 1;
+                    self.mode = Mode::EditDeviceId {
+                        pending: next as u8,
+                    };
+                }
+                Button::All => {
+                    engine.set_device_id(pending);
+                    self.mode = Mode::Home;
+                    self.notice(&format!("Device ID {pending}"));
+                }
+                Button::Mute => self.mode = Mode::Home,
+                _ => {}
+            }
+            return None;
+        }
+        if let Mode::EditChorusType { pending, original } = self.mode {
+            match b {
+                Button::Arrow(Pair::Chorus, dir) => {
+                    let step: i32 = if dir == Dir::Left { -1 } else { 1 };
+                    let next = (pending as i32 + step).rem_euclid(9) as u8;
+                    // The selection sounds at once, so the ear can
+                    // choose; ALL keeps it, MUTE puts the original back.
+                    engine.set_chorus_type(crate::synth::ChorusType::from_index(next));
+                    self.mode = Mode::EditChorusType {
+                        pending: next,
+                        original,
+                    };
+                }
+                Button::All => {
+                    engine.set_chorus_type(crate::synth::ChorusType::from_index(pending));
+                    self.mode = Mode::Home;
+                    self.notice("Chorus params saved");
+                }
+                Button::Mute => {
+                    engine.set_chorus_type(crate::synth::ChorusType::from_index(original));
+                    self.mode = Mode::Home;
+                }
+                _ => {}
+            }
+            return None;
+        }
+        if let Mode::EditPartParams { param, all } = self.mode {
+            let (_, kind) = PART_PARAMS[param];
+            match b {
+                Button::Arrow(Pair::Instrument, dir) => {
+                    let step: i32 = if dir == Dir::Left { -1 } else { 1 };
+                    let next = (param as i32 + step).rem_euclid(PART_PARAMS.len() as i32);
+                    self.mode = Mode::EditPartParams {
+                        param: next as usize,
+                        all,
+                    };
+                }
+                Button::Arrow(Pair::Level, dir) => {
+                    let step: i32 = if dir == Dir::Left { -1 } else { 1 };
+                    // The wire's own range: 0-127 for the controllers,
+                    // 14-114 (the chart's 0EH-72H) for the relative
+                    // tone modifies.
+                    let (lo, hi) = match kind {
+                        PartParam::Cc(_) => (0, 127),
+                        PartParam::Nrpn(..) => (14, 114),
+                    };
+                    let value = (kind.read(engine, self.part) as i32 + step).clamp(lo, hi);
+                    // Sounding at once, so the ear can judge it -- on
+                    // every part when ALL stands.
+                    if all {
+                        for part in 0..PARTS {
+                            kind.write(engine, part, value as u8);
+                        }
+                    } else {
+                        kind.write(engine, self.part, value as u8);
+                    }
+                }
+                Button::Arrow(Pair::Part, dir) => {
+                    // A PART press snaps out of ALL first; after that it
+                    // walks the parts as ever.
+                    if all {
+                        self.all = false;
+                        self.mode = Mode::EditPartParams { param, all: false };
+                    } else {
+                        let step: i32 = if dir == Dir::Left { -1 } else { 1 };
+                        self.part = (self.part as i32 + step).rem_euclid(PARTS as i32) as usize;
+                    }
+                }
+                Button::All => {
+                    self.part_param_snapshot = None;
+                    self.mode = Mode::Home;
+                    self.notice("Part params saved");
+                }
+                Button::Mute => {
+                    if let Some(snapshot) = self.part_param_snapshot.take() {
+                        for (part, values) in snapshot.iter().enumerate() {
+                            for (i, &value) in values.iter().enumerate() {
+                                let (_, kind) = PART_PARAMS[i];
+                                if kind.read(engine, part) != value {
+                                    kind.write(engine, part, value);
+                                }
+                            }
+                        }
+                    }
+                    self.mode = Mode::Home;
+                }
+                _ => {}
+            }
+            return None;
+        }
+        // MUTE latched under an arrow opens the service edits, seeded
+        // on what is in force; elsewhere the gesture means nothing.
+        if let Button::MuteArrow(pair, _) = b {
+            match pair {
+                Pair::MidiCh => {
+                    self.mode = Mode::EditDeviceId {
+                        pending: engine.device_id(),
+                    };
+                }
+                Pair::Chorus => {
+                    let original = engine.chorus_type().index();
+                    self.mode = Mode::EditChorusType {
+                        pending: original,
+                        original,
+                    };
+                }
+                Pair::Instrument => {
+                    // Everything as it stands, for MUTE to put back.
+                    let mut snapshot = Box::new([[0u8; PART_PARAMS.len()]; PARTS]);
+                    for (part, values) in snapshot.iter_mut().enumerate() {
+                        for (i, value) in values.iter_mut().enumerate() {
+                            *value = PART_PARAMS[i].1.read(engine, part);
+                        }
+                    }
+                    self.part_param_snapshot = Some(snapshot);
+                    // Entered with ALL lit, the edits land on all
+                    // sixteen parts at once.
+                    self.mode = Mode::EditPartParams {
+                        param: 0,
+                        all: self.all,
+                    };
+                }
+                _ => {}
+            }
+            return None;
         }
         // The MT-32 prompt takes ALL as on and MUTE as off, and ignores
         // the rest.
@@ -364,6 +597,8 @@ impl FrontPanel {
             Button::Monitor => self.press_monitor(engine),
             Button::Both(pair) => self.toggle_view(pair),
             Button::Arrow(pair, dir) => self.press_arrow(engine, pair, dir),
+            // Handled (or dismissed) before this match; nothing to do.
+            Button::MuteArrow(..) => {}
         }
         None
     }
@@ -446,6 +681,43 @@ impl FrontPanel {
                 screen.instrument = String::new();
                 screen.name = "Initializing...".to_string();
                 dash_values(&mut screen);
+            }
+            Mode::EditDeviceId { pending } => {
+                screen.part = String::new();
+                screen.instrument = String::new();
+                screen.name = format!("Device ID: {pending}");
+                dash_values(&mut screen);
+                let flash_on = (now_ms / FLASH_MS).is_multiple_of(2);
+                screen.all_led = flash_on;
+                screen.mute_led = flash_on;
+            }
+            Mode::EditPartParams { param, all } => {
+                let (name, kind) = PART_PARAMS[param];
+                screen.part = if all {
+                    "ALL".to_string()
+                } else {
+                    format!("{:02}", self.part + 1)
+                };
+                screen.instrument = String::new();
+                screen.name = format!("{name}: {}", kind.read(engine, self.part));
+                dash_values(&mut screen);
+                let flash_on = (now_ms / FLASH_MS).is_multiple_of(2);
+                screen.all_led = flash_on;
+                screen.mute_led = flash_on;
+            }
+            Mode::EditChorusType { pending, .. } => {
+                screen.part = String::new();
+                screen.instrument = String::new();
+                screen.name = format!("Chorus Type: {pending}");
+                // The type's name rides the second line, so the number
+                // means something.
+                screen.subtitle = crate::synth::ChorusType::from_index(pending)
+                    .label()
+                    .to_string();
+                dash_values(&mut screen);
+                let flash_on = (now_ms / FLASH_MS).is_multiple_of(2);
+                screen.all_led = flash_on;
+                screen.mute_led = flash_on;
             }
             Mode::Credits => {
                 screen.part = String::new();

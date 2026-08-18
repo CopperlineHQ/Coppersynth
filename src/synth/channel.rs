@@ -20,11 +20,50 @@ pub(crate) struct Channel {
     pan: i16,
     expression: i16,
     hold_pedal: bool,
+    sostenuto_pedal: bool,
+    soft_pedal: bool,
+    portamento_pedal: bool,
+    /// CC5, 0-127; 0 is the fastest glide.
+    portamento_time: u8,
+    /// The channel's most recent note-on, where a portamento glide
+    /// starts from when the pedal is down.
+    last_key: Option<u8>,
+    /// CC84's armed source key, spent by the next note-on.
+    portamento_source: Option<u8>,
+    /// Mode 4 (mono, M=1) against the power-on Mode 3.
+    mono_mode: bool,
+    /// Channel pressure, received and offered to bank modulators; the
+    /// unit itself routes it nowhere by default.
+    channel_pressure: u8,
+    /// Polyphonic key pressure per key, likewise.
+    poly_pressure: [u8; 128],
+    /// CC0 latches here and lands on the program change, as the unit
+    /// suspends bank select until then.
+    pending_bank: Option<i32>,
 
     reverb_send: u8,
     chorus_send: u8,
 
     rpn: i16,
+    nrpn: i16,
+    /// The GS tone-modify offsets, -50..+50 about zero, applied to the
+    /// notes that start after them (program changes and CC121 leave
+    /// them standing, as the manual specifies).
+    vib_rate_off: i32,
+    vib_depth_off: i32,
+    vib_delay_off: i32,
+    cutoff_off: i32,
+    resonance_off: i32,
+    eg_attack_off: i32,
+    eg_decay_off: i32,
+    eg_release_off: i32,
+    /// The drum-instrument overrides, keyed by note; only a percussion
+    /// part routes anything into them.
+    drum_pitch: [i8; 128],
+    drum_level: [Option<u8>; 128],
+    drum_pan: [Option<u8>; 128],
+    drum_reverb: [Option<u8>; 128],
+    drum_chorus: [Option<u8>; 128],
     pitch_bend_range: i16,
     coarse_tune: i16,
     fine_tune: i16,
@@ -51,9 +90,33 @@ impl Channel {
             pan: 0,
             expression: 0,
             hold_pedal: false,
+            sostenuto_pedal: false,
+            soft_pedal: false,
+            portamento_pedal: false,
+            portamento_time: 0,
+            last_key: None,
+            portamento_source: None,
+            mono_mode: false,
+            channel_pressure: 0,
+            poly_pressure: [0; 128],
+            pending_bank: None,
             reverb_send: 0,
             chorus_send: 0,
             rpn: 0,
+            nrpn: 0,
+            vib_rate_off: 0,
+            vib_depth_off: 0,
+            vib_delay_off: 0,
+            cutoff_off: 0,
+            resonance_off: 0,
+            eg_attack_off: 0,
+            eg_decay_off: 0,
+            eg_release_off: 0,
+            drum_pitch: [0; 128],
+            drum_level: [None; 128],
+            drum_pan: [None; 128],
+            drum_reverb: [None; 128],
+            drum_chorus: [None; 128],
             pitch_bend_range: 0,
             coarse_tune: 0,
             fine_tune: 0,
@@ -76,11 +139,35 @@ impl Channel {
         self.pan = 64 << 7;
         self.expression = 127 << 7;
         self.hold_pedal = false;
+        self.sostenuto_pedal = false;
+        self.soft_pedal = false;
+        self.portamento_pedal = false;
+        self.portamento_time = 0;
+        self.last_key = None;
+        self.portamento_source = None;
+        self.mono_mode = false;
+        self.channel_pressure = 0;
+        self.poly_pressure = [0; 128];
+        self.pending_bank = None;
 
         self.reverb_send = 40;
         self.chorus_send = 0;
 
         self.rpn = -1;
+        self.nrpn = -1;
+        self.vib_rate_off = 0;
+        self.vib_depth_off = 0;
+        self.vib_delay_off = 0;
+        self.cutoff_off = 0;
+        self.resonance_off = 0;
+        self.eg_attack_off = 0;
+        self.eg_decay_off = 0;
+        self.eg_release_off = 0;
+        self.drum_pitch = [0; 128];
+        self.drum_level = [None; 128];
+        self.drum_pan = [None; 128];
+        self.drum_reverb = [None; 128];
+        self.drum_chorus = [None; 128];
         self.pitch_bend_range = 2 << 7;
         self.coarse_tune = 0;
         self.fine_tune = 8192;
@@ -101,6 +188,12 @@ impl Channel {
         self.modulation = 0;
         self.expression = 127 << 7;
         self.hold_pedal = false;
+        self.sostenuto_pedal = false;
+        self.soft_pedal = false;
+        self.portamento_pedal = false;
+        self.portamento_source = None;
+        self.channel_pressure = 0;
+        self.poly_pressure = [0; 128];
 
         self.rpn = -1;
 
@@ -112,14 +205,19 @@ impl Channel {
     }
 
     pub(crate) fn set_bank(&mut self, value: i32) {
-        self.bank_number = value;
-
+        // The unit suspends bank select until the program change that
+        // completes it; a bank sent on its own must not retarget notes
+        // already choosing presets. (Drum parts ignore it outright.)
         if self.is_percussion_channel {
-            self.bank_number += 128;
+            return;
         }
+        self.pending_bank = Some(value);
     }
 
     pub(crate) fn set_patch(&mut self, value: i32) {
+        if let Some(bank) = self.pending_bank.take() {
+            self.bank_number = bank;
+        }
         self.patch_number = value;
     }
 
@@ -159,6 +257,80 @@ impl Channel {
         self.hold_pedal = value >= 64;
     }
 
+    pub(crate) fn set_sostenuto_pedal(&mut self, value: i32) {
+        self.sostenuto_pedal = value >= 64;
+    }
+
+    pub(crate) fn get_sostenuto_pedal(&self) -> bool {
+        self.sostenuto_pedal
+    }
+
+    pub(crate) fn set_soft_pedal(&mut self, value: i32) {
+        self.soft_pedal = value >= 64;
+    }
+
+    pub(crate) fn get_soft_pedal(&self) -> bool {
+        self.soft_pedal
+    }
+
+    pub(crate) fn set_portamento_pedal(&mut self, value: i32) {
+        self.portamento_pedal = value >= 64;
+    }
+
+    pub(crate) fn get_portamento_pedal(&self) -> bool {
+        self.portamento_pedal
+    }
+
+    pub(crate) fn set_portamento_time(&mut self, value: i32) {
+        self.portamento_time = value as u8;
+    }
+
+    pub(crate) fn get_portamento_time(&self) -> u8 {
+        self.portamento_time
+    }
+
+    pub(crate) fn set_last_key(&mut self, key: i32) {
+        self.last_key = Some(key as u8);
+    }
+
+    pub(crate) fn get_last_key(&self) -> Option<u8> {
+        self.last_key
+    }
+
+    pub(crate) fn set_portamento_source(&mut self, key: i32) {
+        self.portamento_source = Some(key as u8);
+    }
+
+    pub(crate) fn take_portamento_source(&mut self) -> Option<u8> {
+        self.portamento_source.take()
+    }
+
+    pub(crate) fn set_mono_mode(&mut self, mono: bool) {
+        self.mono_mode = mono;
+    }
+
+    pub(crate) fn get_mono_mode(&self) -> bool {
+        self.mono_mode
+    }
+
+    pub(crate) fn set_channel_pressure(&mut self, value: i32) {
+        self.channel_pressure = value as u8;
+    }
+
+    pub(crate) fn get_channel_pressure(&self) -> u8 {
+        self.channel_pressure
+    }
+
+    pub(crate) fn set_poly_pressure(&mut self, key: i32, value: i32) {
+        if (0..128).contains(&key) {
+            self.poly_pressure[key as usize] = value as u8;
+        }
+    }
+
+    pub(crate) fn get_poly_pressure(&self, key: i32) -> u8 {
+        self.poly_pressure.get(key as usize).copied().unwrap_or(0)
+    }
+
     pub(crate) fn set_reverb_send(&mut self, value: i32) {
         self.reverb_send = value as u8;
     }
@@ -177,15 +349,184 @@ impl Channel {
         self.last_data_type = DataType::Rpn;
     }
 
-    pub(crate) fn set_nrpn_coarse(&mut self, _value: i32) {
+    pub(crate) fn set_nrpn_coarse(&mut self, value: i32) {
+        self.nrpn = (self.nrpn & 0x7F) | (value << 7) as i16;
         self.last_data_type = DataType::Nrpn;
     }
 
-    pub(crate) fn set_nrpn_fine(&mut self, _value: i32) {
+    pub(crate) fn set_nrpn_fine(&mut self, value: i32) {
+        self.nrpn = (((self.nrpn as i32) & 0xFF80) | value) as i16;
         self.last_data_type = DataType::Nrpn;
+    }
+
+    /// The GS NRPN set, routed on the data-entry MSB (the LSB is
+    /// ignored, as the unit ignores it). Tone modifies are relative,
+    /// -50..+50 about 40H; the drum set is per-note, absolute except
+    /// the relative pitch. Program changes and CC121 leave these
+    /// standing; only a reset clears them.
+    fn nrpn_data_entry(&mut self, value: i32) {
+        let msb = (self.nrpn >> 7) & 0x7F;
+        let lsb = self.nrpn & 0x7F;
+        let relative = (value - 64).clamp(-50, 50);
+        match (msb, lsb) {
+            (0x01, 0x08) => self.vib_rate_off = relative,
+            (0x01, 0x09) => self.vib_depth_off = relative,
+            (0x01, 0x0A) => self.vib_delay_off = relative,
+            (0x01, 0x20) => self.cutoff_off = relative,
+            (0x01, 0x21) => self.resonance_off = relative,
+            (0x01, 0x63) => self.eg_attack_off = relative,
+            (0x01, 0x64) => self.eg_decay_off = relative,
+            (0x01, 0x66) => self.eg_release_off = relative,
+            (0x18, key) if self.is_percussion_channel => {
+                self.drum_pitch[key as usize] = (value - 64).clamp(-64, 63) as i8;
+            }
+            (0x1A, key) if self.is_percussion_channel => {
+                self.drum_level[key as usize] = Some(value as u8);
+            }
+            (0x1C, key) if self.is_percussion_channel => {
+                self.drum_pan[key as usize] = Some(value as u8);
+            }
+            (0x1D, key) if self.is_percussion_channel => {
+                self.drum_reverb[key as usize] = Some(value as u8);
+            }
+            (0x1E, key) if self.is_percussion_channel => {
+                self.drum_chorus[key as usize] = Some(value as u8);
+            }
+            _ => {}
+        }
+    }
+
+    /// A GS NRPN's stored value back in wire terms, for the fascia's
+    /// editor (relative parameters read 64 at neutral).
+    pub(crate) fn nrpn_wire_value(&self, msb: u8, lsb: u8) -> u8 {
+        let rel = |off: i32| (off + 64).clamp(0, 127) as u8;
+        match (msb, lsb) {
+            (0x01, 0x08) => rel(self.vib_rate_off),
+            (0x01, 0x09) => rel(self.vib_depth_off),
+            (0x01, 0x0A) => rel(self.vib_delay_off),
+            (0x01, 0x20) => rel(self.cutoff_off),
+            (0x01, 0x21) => rel(self.resonance_off),
+            (0x01, 0x63) => rel(self.eg_attack_off),
+            (0x01, 0x64) => rel(self.eg_decay_off),
+            (0x01, 0x66) => rel(self.eg_release_off),
+            _ => 64,
+        }
+    }
+
+    /// Vibrato rate as a frequency factor (about +/-4x at the ends).
+    pub(crate) fn nrpn_vib_rate_factor(&self) -> f32 {
+        (2_f32).powf(self.vib_rate_off as f32 / 25.0)
+    }
+
+    /// Extra vibrato depth in cents.
+    pub(crate) fn nrpn_vib_depth_cents(&self) -> f32 {
+        self.vib_depth_off as f32 * 6.0
+    }
+
+    /// Vibrato delay as a duration factor (positive waits longer).
+    pub(crate) fn nrpn_vib_delay_factor(&self) -> f32 {
+        (2_f32).powf(self.vib_delay_off as f32 / 25.0)
+    }
+
+    /// TVF cutoff offset in cents.
+    pub(crate) fn nrpn_cutoff_cents(&self) -> f32 {
+        self.cutoff_off as f32 * 48.0
+    }
+
+    /// TVF resonance offset in centibels.
+    pub(crate) fn nrpn_resonance_cb(&self) -> f32 {
+        self.resonance_off as f32 * 6.0
+    }
+
+    /// Envelope time factors: attack, decay, release (about half to
+    /// double across the range).
+    pub(crate) fn nrpn_eg_factors(&self) -> (f32, f32, f32) {
+        let f = |off: i32| (2_f32).powf(off as f32 / 50.0);
+        (
+            f(self.eg_attack_off),
+            f(self.eg_decay_off),
+            f(self.eg_release_off),
+        )
+    }
+
+    /// A drum note's pitch offset in semitones.
+    pub(crate) fn drum_pitch_semitones(&self, key: i32) -> f32 {
+        if !self.is_percussion_channel {
+            return 0_f32;
+        }
+        self.drum_pitch
+            .get(key as usize)
+            .map(|&p| p as f32)
+            .unwrap_or(0_f32)
+    }
+
+    /// A drum note's TVA level as a gain (GM's squared curve).
+    pub(crate) fn drum_level_gain(&self, key: i32) -> f32 {
+        if !self.is_percussion_channel {
+            return 1_f32;
+        }
+        match self.drum_level.get(key as usize).copied().flatten() {
+            Some(level) => {
+                let v = level as f32 / 127.0;
+                v * v
+            }
+            None => 1_f32,
+        }
+    }
+
+    /// A drum note's pan override in the instrument's -50..+50 units.
+    /// 0 on the wire means random placement; a deterministic scatter
+    /// derived from the note keeps renders reproducible.
+    pub(crate) fn drum_pan_override(&self, key: i32, velocity: i32) -> Option<f32> {
+        if !self.is_percussion_channel {
+            return None;
+        }
+        let raw = self.drum_pan.get(key as usize).copied().flatten()?;
+        if raw == 0 {
+            let hash = (key as u32)
+                .wrapping_mul(2654435761)
+                .wrapping_add(velocity as u32)
+                .wrapping_mul(40503);
+            return Some((hash >> 16) as f32 % 101.0 - 50.0);
+        }
+        Some((raw as f32 - 64.0).clamp(-50.0, 50.0) * (50.0 / 63.0))
+    }
+
+    /// The part reverb send scaled by a drum note's multiplicand.
+    pub(crate) fn get_reverb_send_for(&self, key: i32) -> f32 {
+        let mult = if self.is_percussion_channel {
+            self.drum_reverb
+                .get(key as usize)
+                .copied()
+                .flatten()
+                .map(|v| v as f32 / 127.0)
+                .unwrap_or(1_f32)
+        } else {
+            1_f32
+        };
+        self.get_reverb_send() * mult
+    }
+
+    /// The part chorus send scaled by a drum note's multiplicand.
+    pub(crate) fn get_chorus_send_for(&self, key: i32) -> f32 {
+        let mult = if self.is_percussion_channel {
+            self.drum_chorus
+                .get(key as usize)
+                .copied()
+                .flatten()
+                .map(|v| v as f32 / 127.0)
+                .unwrap_or(1_f32)
+        } else {
+            1_f32
+        };
+        self.get_chorus_send() * mult
     }
 
     pub(crate) fn data_entry_coarse(&mut self, value: i32) {
+        if self.last_data_type == DataType::Nrpn {
+            self.nrpn_data_entry(value);
+            return;
+        }
         if self.last_data_type != DataType::Rpn {
             return;
         }
