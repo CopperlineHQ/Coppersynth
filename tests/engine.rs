@@ -7,7 +7,7 @@ use coppersynth::engine::{Engine, DRUM_PART, PARTS};
 use coppersynth::mt32::translator::Mt32Mode;
 
 fn engine(mode: Mt32Mode) -> Option<Engine> {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../assets/GeneralUser-GS.sf2");
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/GeneralUser-GS.sf2");
     if !std::path::Path::new(path).is_file() {
         return None;
     }

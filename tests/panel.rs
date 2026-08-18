@@ -7,7 +7,7 @@ use coppersynth::engine::{Engine, Monitor, Mt32Mode, DRUM_PART};
 use coppersynth::panel::{Button, Dir, FrontPanel, Pair, PanelRequest};
 
 fn engine(mode: Mt32Mode) -> Option<Engine> {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../assets/GeneralUser-GS.sf2");
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/GeneralUser-GS.sf2");
     if !std::path::Path::new(path).is_file() {
         return None;
     }
@@ -184,7 +184,7 @@ fn all_mode_broadcasts_to_every_part() {
     let bank: String = e.bank_name().chars().take(20).collect();
     assert_eq!(screen.name, bank, "ALL introduces the loaded bank");
     assert_eq!(screen.level, "127");
-    assert_eq!(screen.midi_ch, "17", "the factory device ID");
+    assert_eq!(screen.midi_ch, "---", "no channel speaks for all parts");
     panel.button(&mut e, Button::Arrow(Pair::Level, Dir::Left));
     panel.button(&mut e, Button::Arrow(Pair::KeyShift, Dir::Right));
     for p in [0, 7, 15] {
@@ -198,7 +198,7 @@ fn all_mode_broadcasts_to_every_part() {
     // The MIDI CH pair sits inert in ALL mode: no channel speaks for
     // sixteen parts, and the read-out says so with dashes.
     panel.button(&mut e, Button::Arrow(Pair::MidiCh, Dir::Left));
-    assert_eq!(e.device_id(), 16, "the device ID is not a fascia setting");
+    assert_eq!(e.device_id(), 17, "the device ID is not a fascia setting");
     assert_eq!(panel.screen(&mut e, 4_000).midi_ch, "---");
 }
 
