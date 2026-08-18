@@ -243,10 +243,12 @@ fn monitor_solos_the_shown_part() {
     let activity = e.part_activity();
     assert!(activity[0] > 0.0, "the monitored part sounds");
     assert_eq!(activity[1], 0.0, "the other part is held");
-    // Any press stands the solo down on the way to its own meaning:
-    // the part moves, and the machine is listening to everything again.
+    // The PART pair is the exception to the stand-down rule: the solo
+    // travels with the selection.
     panel.button(&mut e, Button::Arrow(Pair::Part, Dir::Right));
-    assert_eq!(e.monitor(), Monitor::Off, "the press ends the solo");
+    assert_eq!(e.monitor(), Monitor::Solo(1), "the solo follows the part");
+    panel.button(&mut e, Button::Mute);
+    assert_eq!(e.monitor(), Monitor::Off);
 }
 
 /// INSTRUMENT ◄ held through the power-on asks the MT-32 question,
