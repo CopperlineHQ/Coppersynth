@@ -136,6 +136,7 @@ enum Mode {
     /// whole snapshot back.
     EditPartParams {
         param: usize,
+        all: bool,
     },
     /// The unit playing to itself: ALL plays, MUTE stops, PART picks
     /// the song. Reached with both PART halves held through power-on.
@@ -334,6 +335,20 @@ impl FrontPanel {
         self.init_started = None;
     }
 
+    /// Whether an edit or confirm screen owns the glass -- the host
+    /// holds its latching gestures back while one does.
+    pub fn in_edit(&self) -> bool {
+        matches!(
+            self.mode,
+            Mode::ConfirmMt32
+                | Mode::ConfirmFont
+                | Mode::Initializing
+                | Mode::EditDeviceId { .. }
+                | Mode::EditChorusType { .. }
+                | Mode::EditPartParams { .. }
+        )
+    }
+
     /// A press. Anything the panel cannot mirror alone comes back as a
     /// request for the host.
     pub fn button(&mut self, engine: &mut Engine, b: Button) -> Option<PanelRequest> {
@@ -402,10 +417,9 @@ impl FrontPanel {
                     };
                 }
                 Button::All => {
-                    let chorus_type = crate::synth::ChorusType::from_index(pending);
-                    engine.set_chorus_type(chorus_type);
+                    engine.set_chorus_type(crate::synth::ChorusType::from_index(pending));
                     self.mode = Mode::Home;
-                    self.notice(chorus_type.label());
+                    self.notice("Chorus params saved");
                 }
                 Button::Mute => {
                     engine.set_chorus_type(crate::synth::ChorusType::from_index(original));
@@ -415,7 +429,7 @@ impl FrontPanel {
             }
             return None;
         }
-        if let Mode::EditPartParams { param } = self.mode {
+        if let Mode::EditPartParams { param, all } = self.mode {
             let (_, kind) = PART_PARAMS[param];
             match b {
                 Button::Arrow(Pair::Instrument, dir) => {
@@ -423,22 +437,44 @@ impl FrontPanel {
                     let next = (param as i32 + step).rem_euclid(PART_PARAMS.len() as i32);
                     self.mode = Mode::EditPartParams {
                         param: next as usize,
+                        all,
                     };
                 }
                 Button::Arrow(Pair::Level, dir) => {
                     let step: i32 = if dir == Dir::Left { -1 } else { 1 };
-                    let value = (kind.read(engine, self.part) as i32 + step).clamp(0, 127);
-                    // Sounding at once, so the ear can judge it.
-                    kind.write(engine, self.part, value as u8);
+                    // The wire's own range: 0-127 for the controllers,
+                    // 14-114 (the chart's 0EH-72H) for the relative
+                    // tone modifies.
+                    let (lo, hi) = match kind {
+                        PartParam::Cc(_) => (0, 127),
+                        PartParam::Nrpn(..) => (14, 114),
+                    };
+                    let value = (kind.read(engine, self.part) as i32 + step).clamp(lo, hi);
+                    // Sounding at once, so the ear can judge it -- on
+                    // every part when ALL stands.
+                    if all {
+                        for part in 0..PARTS {
+                            kind.write(engine, part, value as u8);
+                        }
+                    } else {
+                        kind.write(engine, self.part, value as u8);
+                    }
                 }
                 Button::Arrow(Pair::Part, dir) => {
-                    let step: i32 = if dir == Dir::Left { -1 } else { 1 };
-                    self.part = (self.part as i32 + step).rem_euclid(PARTS as i32) as usize;
+                    // A PART press snaps out of ALL first; after that it
+                    // walks the parts as ever.
+                    if all {
+                        self.all = false;
+                        self.mode = Mode::EditPartParams { param, all: false };
+                    } else {
+                        let step: i32 = if dir == Dir::Left { -1 } else { 1 };
+                        self.part = (self.part as i32 + step).rem_euclid(PARTS as i32) as usize;
+                    }
                 }
                 Button::All => {
                     self.part_param_snapshot = None;
                     self.mode = Mode::Home;
-                    self.notice("Part params kept");
+                    self.notice("Part params saved");
                 }
                 Button::Mute => {
                     if let Some(snapshot) = self.part_param_snapshot.take() {
@@ -482,7 +518,12 @@ impl FrontPanel {
                         }
                     }
                     self.part_param_snapshot = Some(snapshot);
-                    self.mode = Mode::EditPartParams { param: 0 };
+                    // Entered with ALL lit, the edits land on all
+                    // sixteen parts at once.
+                    self.mode = Mode::EditPartParams {
+                        param: 0,
+                        all: self.all,
+                    };
                 }
                 _ => {}
             }
@@ -650,9 +691,13 @@ impl FrontPanel {
                 screen.all_led = flash_on;
                 screen.mute_led = flash_on;
             }
-            Mode::EditPartParams { param } => {
+            Mode::EditPartParams { param, all } => {
                 let (name, kind) = PART_PARAMS[param];
-                screen.part = format!("{:02}", self.part + 1);
+                screen.part = if all {
+                    "ALL".to_string()
+                } else {
+                    format!("{:02}", self.part + 1)
+                };
                 screen.instrument = String::new();
                 screen.name = format!("{name}: {}", kind.read(engine, self.part));
                 dash_values(&mut screen);

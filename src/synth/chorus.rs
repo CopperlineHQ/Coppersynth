@@ -28,13 +28,13 @@ impl ChorusType {
         match index {
             0 => Self::Off,
             1 => Self::Chorus1,
-            2 => Self::Chorus2,
+            3 => Self::Chorus3,
             4 => Self::Celeste1,
             5 => Self::Celeste2,
             6 => Self::Flanger,
             7 => Self::FeedbackChorus,
             8 => Self::ShortDelay,
-            _ => Self::Chorus3,
+            _ => Self::Chorus2,
         }
     }
 

@@ -136,7 +136,7 @@ impl Synthesizer {
             master_volume,
             master_reverb_gain: 1.0_f32,
             master_chorus_gain: 1.0_f32,
-            chorus_type: ChorusType::Chorus3,
+            chorus_type: ChorusType::Chorus2,
             effects,
         })
     }
@@ -763,8 +763,9 @@ impl Effects {
             reverb_input: vec![0_f32; settings.block_size],
             reverb_output_left: vec![0_f32; settings.block_size],
             reverb_output_right: vec![0_f32; settings.block_size],
-            // The unit wakes in Chorus 3, exactly as the hardware does.
-            chorus: Chorus::of_type(settings.sample_rate, ChorusType::Chorus3),
+            // The unit wakes in Chorus 2 -- the hardware's own default
+            // is Chorus 3, but 2's quicker sweep carries further.
+            chorus: Chorus::of_type(settings.sample_rate, ChorusType::Chorus2),
             chorus_input_left: vec![0_f32; settings.block_size],
             chorus_input_right: vec![0_f32; settings.block_size],
             chorus_output_left: vec![0_f32; settings.block_size],

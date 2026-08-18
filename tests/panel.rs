@@ -625,9 +625,9 @@ fn the_chorus_type_edit_names_types_and_commits() {
     settled(&mut panel, &mut e);
     panel.button(&mut e, Button::MuteArrow(Pair::Chorus, Dir::Right));
     let screen = panel.screen(&mut e, 4_000);
-    assert_eq!(screen.name, "Chorus Type: 3", "the unit wakes in Chorus 3");
-    assert_eq!(screen.subtitle, "Chorus 3");
-    for _ in 0..3 {
+    assert_eq!(screen.name, "Chorus Type: 2", "the unit wakes in Chorus 2");
+    assert_eq!(screen.subtitle, "Chorus 2");
+    for _ in 0..4 {
         panel.button(&mut e, Button::Arrow(Pair::Chorus, Dir::Right));
     }
     let screen = panel.screen(&mut e, 4_000);
@@ -695,7 +695,29 @@ fn the_part_parameter_editor_browses_audits_and_restores() {
     assert_eq!(e.part_cc_value(1, 0x05), 1, "ALL keeps the edit");
     assert_eq!(
         panel.screen(&mut e, 4_000).name,
-        "Part params kept",
+        "Part params saved",
         "the notice"
     );
+}
+
+/// Entered with ALL lit, the part-parameter editor writes every part
+/// at once and says so; a PART press snaps back to the single part.
+#[test]
+fn the_part_parameter_editor_speaks_for_all_parts() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    let mut panel = FrontPanel::default();
+    settled(&mut panel, &mut e);
+    panel.button(&mut e, Button::All); // ALL mode first
+    panel.button(&mut e, Button::MuteArrow(Pair::Instrument, Dir::Right));
+    assert_eq!(panel.screen(&mut e, 4_000).part, "ALL");
+    panel.button(&mut e, Button::Arrow(Pair::Level, Dir::Right));
+    assert_eq!(e.part_cc_value(0, 0x05), 1, "part 1 took the edit");
+    assert_eq!(e.part_cc_value(11, 0x05), 1, "part 12 took it too");
+    // PART snaps out of ALL and back to the selected part.
+    panel.button(&mut e, Button::Arrow(Pair::Part, Dir::Right));
+    assert_eq!(panel.screen(&mut e, 4_000).part, "01");
+    panel.button(&mut e, Button::Mute); // restore everything
+    assert_eq!(e.part_cc_value(11, 0x05), 0, "the snapshot covers all");
 }
