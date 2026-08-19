@@ -100,7 +100,7 @@ fn instrument_arrows_step_programs_and_kits() {
     assert_eq!(screen.part, "10");
     assert!(screen.name.starts_with('*'), "a drum set wears the star");
     // The arrow lands on the next kit the font actually carries.
-    let next = e.neighbour_kit(1).expect("kits exist");
+    let next = e.neighbour_kit(DRUM_PART, 1).expect("kits exist");
     assert_ne!(next, 0, "the font carries more than one kit");
     panel.button(&mut e, Button::Arrow(Pair::Instrument, Dir::Right));
     assert_eq!(e.part_view(DRUM_PART).instrument, next);
@@ -118,7 +118,7 @@ fn cycling_walks_the_fonts_own_list() {
     let mut seen = vec![start];
     let mut at = start;
     for _ in 0..129 {
-        at = e.neighbour_kit(1).expect("kits exist");
+        at = e.neighbour_kit(DRUM_PART, 1).expect("kits exist");
         e.set_part_instrument(DRUM_PART, at);
         if at == start {
             break;
@@ -184,7 +184,7 @@ fn all_mode_broadcasts_to_every_part() {
     let bank: String = e.bank_name().chars().take(20).collect();
     assert_eq!(screen.name, bank, "ALL introduces the loaded bank");
     assert_eq!(screen.level, "127");
-    assert_eq!(screen.midi_ch, "---", "no channel speaks for all parts");
+    assert_eq!(screen.midi_ch, "17", "the ALL cell serves the Device ID");
     panel.button(&mut e, Button::Arrow(Pair::Level, Dir::Left));
     panel.button(&mut e, Button::Arrow(Pair::KeyShift, Dir::Right));
     for p in [0, 7, 15] {
@@ -195,11 +195,12 @@ fn all_mode_broadcasts_to_every_part() {
     // One part out of step and the read-out shrugs.
     e.set_part_reverb(2, 90);
     assert_eq!(panel.screen(&mut e, 4_000).reverb, "---");
-    // The MIDI CH pair sits inert in ALL mode: no channel speaks for
-    // sixteen parts, and the read-out says so with dashes.
+    // The MIDI CH arrows in ALL mode turn the Device ID, as the unit's
+    // own panel does.
     panel.button(&mut e, Button::Arrow(Pair::MidiCh, Dir::Left));
-    assert_eq!(e.device_id(), 17, "the device ID is not a fascia setting");
-    assert_eq!(panel.screen(&mut e, 4_000).midi_ch, "---");
+    assert_eq!(e.device_id(), 16, "the arrows turn the Device ID");
+    assert_eq!(panel.screen(&mut e, 4_000).midi_ch, "16");
+    panel.button(&mut e, Button::Arrow(Pair::MidiCh, Dir::Right));
 }
 
 /// MUTE gates the shown part and the screen says so; in ALL mode it
@@ -338,18 +339,28 @@ fn the_debug_print_rolls_its_credits() {
     assert_eq!(panel.screen(&mut e, 5_100).part, "01");
 }
 
-/// INSTRUMENT ► held through the power-on asks the factory question:
-/// ALL initialises -- the reset request reaches the host, the screen
-/// holds a second -- and the unit boots as on any morning.
+/// The INSTRUMENT pair held through the power-on asks the factory
+/// question: ALL initialises -- the reset request reaches the host,
+/// the screen holds a second -- and the unit boots as on any morning.
+/// INSTRUMENT ► alone asks the GS question, settled on the spot.
 #[test]
 fn the_font_prompt_initialises_after_a_pause() {
     let Some(mut e) = engine(Mt32Mode::Off) else {
         return;
     };
+    // Init GS first: the runtime settings return to the GS basic
+    // setting and nothing asks the host for anything.
     let mut panel = FrontPanel::default();
     panel.power_on_held(&[Button::Arrow(Pair::Instrument, Dir::Right)]);
+    assert_eq!(panel.screen(&mut e, 0).name, "Init GS, Sure?");
+    e.set_master_reverb(10);
+    assert_eq!(panel.button(&mut e, Button::All), None);
+    assert_eq!(e.master_reverb(), 64, "the GS basic setting returns");
+
+    let mut panel = FrontPanel::default();
+    panel.power_on_held(&[Button::Both(Pair::Instrument)]);
     let prompt = panel.screen(&mut e, 0);
-    assert_eq!(prompt.name, "Init SoundFont,Sure?");
+    assert_eq!(prompt.name, "Init All, Sure?");
     assert!(prompt.all_led && prompt.mute_led, "the lamps flash on");
     assert!(!panel.screen(&mut e, 500).all_led, "and off");
     let request = panel.button(&mut e, Button::All);
@@ -593,147 +604,166 @@ fn the_boot_line_wears_dashes() {
     assert_eq!(panel.screen(&mut e, 3_100).level, "127", "and home again");
 }
 
-/// MUTE latched under a MIDI CH arrow opens the Device ID edit: the
-/// arrows cycle 1-32, ALL commits, MUTE cancels -- the mkII's own
-/// panel operation in this unit's grammar.
+/// With ALL lit the MIDI CH arrows turn the Device ID in place,
+/// 1-32 clamped at the ends, shown in the MIDI CH cell -- the unit's
+/// own arrangement, no edit screen at all.
 #[test]
-fn the_device_id_edit_cycles_commits_and_cancels() {
+fn the_device_id_turns_under_the_all_midi_ch_arrows() {
     let Some(mut e) = engine(Mt32Mode::Off) else {
         return;
     };
     let mut panel = FrontPanel::default();
     settled(&mut panel, &mut e);
-    panel.button(&mut e, Button::MuteArrow(Pair::MidiCh, Dir::Right));
-    let screen = panel.screen(&mut e, 4_000);
-    assert_eq!(screen.name, "Device ID: 17", "seeded on the factory ID");
-    assert!(screen.all_led && screen.mute_led, "the lamps flash on");
+    panel.button(&mut e, Button::All);
+    assert_eq!(
+        panel.screen(&mut e, 4_000).midi_ch,
+        "17",
+        "the ALL screen's MIDI CH cell serves the Device ID"
+    );
     panel.button(&mut e, Button::Arrow(Pair::MidiCh, Dir::Right));
-    assert_eq!(panel.screen(&mut e, 4_000).name, "Device ID: 18");
-    // Wraps: 18 left to 17, 16 ... down past 1 comes round to 32.
-    for _ in 0..18 {
+    assert_eq!(e.device_id(), 18);
+    assert_eq!(panel.screen(&mut e, 4_000).midi_ch, "18");
+    for _ in 0..40 {
         panel.button(&mut e, Button::Arrow(Pair::MidiCh, Dir::Left));
     }
-    assert_eq!(panel.screen(&mut e, 4_000).name, "Device ID: 32");
+    assert_eq!(e.device_id(), 1, "clamped, not wrapped");
+    // ALL dark, the same arrows are the part's receive channel again.
     panel.button(&mut e, Button::All);
-    assert_eq!(e.device_id(), 32, "ALL commits the pending value");
+    panel.button(&mut e, Button::Arrow(Pair::MidiCh, Dir::Right));
+    assert_eq!(e.device_id(), 1, "the Device ID only turns under ALL");
+}
+
+/// The system menu (ALL lit, PART pair): ALL and MUTE walk the items,
+/// the INSTRUMENT arrows set the value live, the PART pair leaves.
+#[test]
+fn the_system_menu_walks_and_sets() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    let mut panel = FrontPanel::default();
+    settled(&mut panel, &mut e);
+    panel.button(&mut e, Button::All);
+    panel.button(&mut e, Button::Both(Pair::Part));
+    let screen = panel.screen(&mut e, 4_000);
+    assert_eq!(screen.name, ">M. Tune: 440.0", "the menu opens on M.Tune");
+    assert_eq!(screen.part, "ALL");
+    panel.button(&mut e, Button::All);
     assert_eq!(
         panel.screen(&mut e, 4_000).name,
-        "Device ID 32",
-        "the notice"
+        ">Reverb: Hall2",
+        "ALL steps forward to the reverb type"
     );
-    // Cancel leaves the ID alone.
-    panel.button(&mut e, Button::MuteArrow(Pair::MidiCh, Dir::Left));
-    panel.button(&mut e, Button::Arrow(Pair::MidiCh, Dir::Right));
-    panel.button(&mut e, Button::Mute);
-    assert_eq!(e.device_id(), 32, "MUTE cancels");
-}
-
-/// MUTE latched under a CHORUS arrow opens the Chorus Type edit: 0-8
-/// with the type's name on the second line, ALL commits, MUTE cancels.
-#[test]
-fn the_chorus_type_edit_names_types_and_commits() {
-    let Some(mut e) = engine(Mt32Mode::Off) else {
-        return;
-    };
-    let mut panel = FrontPanel::default();
-    settled(&mut panel, &mut e);
-    panel.button(&mut e, Button::MuteArrow(Pair::Chorus, Dir::Right));
-    let screen = panel.screen(&mut e, 4_000);
-    assert_eq!(screen.name, "Chorus Type: 2", "the unit wakes in Chorus 2");
-    assert_eq!(screen.subtitle, "Chorus 2");
-    for _ in 0..4 {
-        panel.button(&mut e, Button::Arrow(Pair::Chorus, Dir::Right));
-    }
-    let screen = panel.screen(&mut e, 4_000);
-    assert_eq!(screen.name, "Chorus Type: 6");
-    assert_eq!(screen.subtitle, "Flanger");
-    // The selection is already sounding for the audition.
-    assert_eq!(e.chorus_type().index(), 6, "cycling activates at once");
     panel.button(&mut e, Button::All);
-    assert_eq!(e.chorus_type().index(), 6, "ALL keeps the type");
-    // Cancel puts the original back, even after auditioning another;
-    // 0 is Off and stays selectable.
-    panel.button(&mut e, Button::MuteArrow(Pair::Chorus, Dir::Left));
-    for _ in 0..6 {
-        panel.button(&mut e, Button::Arrow(Pair::Chorus, Dir::Left));
-    }
-    assert_eq!(panel.screen(&mut e, 4_000).subtitle, "Off");
-    assert_eq!(e.chorus_type().index(), 0, "the audition sounds Off");
-    panel.button(&mut e, Button::Mute);
-    assert_eq!(e.chorus_type().index(), 6, "MUTE restores the original");
-}
-
-/// MUTE latched under an INSTRUMENT arrow opens the part-parameter
-/// editor: INSTRUMENT arrows browse, LEVEL arrows set 0-127 sounding
-/// at once, PART arrows move between parts, ALL keeps the lot and
-/// MUTE puts the whole snapshot back.
-#[test]
-fn the_part_parameter_editor_browses_audits_and_restores() {
-    let Some(mut e) = engine(Mt32Mode::Off) else {
-        return;
-    };
-    let mut panel = FrontPanel::default();
-    settled(&mut panel, &mut e);
-    panel.button(&mut e, Button::MuteArrow(Pair::Instrument, Dir::Right));
-    let screen = panel.screen(&mut e, 4_000);
-    assert_eq!(screen.name, "Portamento Time: 0");
-    assert_eq!(screen.part, "01");
-    assert!(screen.all_led && screen.mute_led, "the lamps flash on");
-    // LEVEL edits the value, live.
-    for _ in 0..3 {
-        panel.button(&mut e, Button::Arrow(Pair::Level, Dir::Right));
-    }
-    assert_eq!(panel.screen(&mut e, 4_000).name, "Portamento Time: 3");
-    assert_eq!(e.part_cc_value(0, 0x05), 3, "the edit sounds at once");
-    // INSTRUMENT browses the settings.
+    assert_eq!(
+        panel.screen(&mut e, 4_000).name,
+        ">Chorus: Chorus3",
+        "the unit wakes in Chorus 3"
+    );
+    // The INSTRUMENT arrows set the value, sounding at once.
     panel.button(&mut e, Button::Arrow(Pair::Instrument, Dir::Right));
-    assert_eq!(panel.screen(&mut e, 4_000).name, "Portamento: 0");
-    // PART moves the whole view to another part.
-    panel.button(&mut e, Button::Arrow(Pair::Part, Dir::Right));
-    assert_eq!(panel.screen(&mut e, 4_000).part, "02");
-    for _ in 0..6 {
+    assert_eq!(e.chorus_type().index(), 3, "the change is live");
+    assert_eq!(panel.screen(&mut e, 4_000).name, ">Chorus: Chorus4");
+    // MUTE steps back.
+    panel.button(&mut e, Button::Mute);
+    assert_eq!(panel.screen(&mut e, 4_000).name, ">Reverb: Hall2");
+    // Walk to Display and pick a reverse type.
+    for _ in 0..2 {
+        panel.button(&mut e, Button::All);
+    }
+    assert_eq!(panel.screen(&mut e, 4_000).name, ">Display: Type1");
+    for _ in 0..4 {
         panel.button(&mut e, Button::Arrow(Pair::Instrument, Dir::Right));
     }
-    assert_eq!(panel.screen(&mut e, 4_000).name, "Cutoff: 64");
-    panel.button(&mut e, Button::Arrow(Pair::Level, Dir::Left));
-    assert_eq!(e.part_nrpn_wire(1, 0x01, 0x20), 63, "the NRPN lands");
-    // MUTE restores everything the audition touched, on every part.
-    panel.button(&mut e, Button::Mute);
-    assert_eq!(e.part_cc_value(0, 0x05), 0, "portamento time restored");
-    assert_eq!(e.part_nrpn_wire(1, 0x01, 0x20), 64, "cutoff restored");
-    // ALL keeps what the audition set. The editor kept part 2 selected
-    // from the browse above, so the edit lands there.
-    panel.button(&mut e, Button::MuteArrow(Pair::Instrument, Dir::Left));
-    panel.button(&mut e, Button::Arrow(Pair::Level, Dir::Right));
-    panel.button(&mut e, Button::All);
-    assert_eq!(e.part_cc_value(1, 0x05), 1, "ALL keeps the edit");
-    assert_eq!(
-        panel.screen(&mut e, 4_000).name,
-        "Part params saved",
-        "the notice"
-    );
+    assert_eq!(e.display_type(), 5);
+    // The PART pair leaves, and the change stands.
+    panel.button(&mut e, Button::Both(Pair::Part));
+    assert_eq!(panel.screen(&mut e, 5_000).part, "ALL", "home again");
+    assert_eq!(e.chorus_type().index(), 3);
 }
 
-/// Entered with ALL lit, the part-parameter editor writes every part
-/// at once and says so; a PART press snaps back to the single part.
+/// The part menu (ALL dark, PART pair): the mkII's own list from Part
+/// Mode to Release Time with this unit's extras behind, values live,
+/// the PART arrows moving between parts with the item held.
 #[test]
-fn the_part_parameter_editor_speaks_for_all_parts() {
+fn the_part_menu_edits_the_mkii_list() {
     let Some(mut e) = engine(Mt32Mode::Off) else {
         return;
     };
     let mut panel = FrontPanel::default();
     settled(&mut panel, &mut e);
-    panel.button(&mut e, Button::All); // ALL mode first
-    panel.button(&mut e, Button::MuteArrow(Pair::Instrument, Dir::Right));
-    assert_eq!(panel.screen(&mut e, 4_000).part, "ALL");
-    panel.button(&mut e, Button::Arrow(Pair::Level, Dir::Right));
-    assert_eq!(e.part_cc_value(0, 0x05), 1, "part 1 took the edit");
-    assert_eq!(e.part_cc_value(11, 0x05), 1, "part 12 took it too");
-    // PART snaps out of ALL and back to the selected part.
+    panel.button(&mut e, Button::Both(Pair::Part));
+    let screen = panel.screen(&mut e, 4_000);
+    assert_eq!(
+        screen.name, ">Part Mode: Norm",
+        "the menu opens on Part Mode"
+    );
+    assert_eq!(screen.part, "01");
+    // Part Mode flips the part to a drum musician on the font's kits.
+    panel.button(&mut e, Button::Arrow(Pair::Instrument, Dir::Right));
+    assert!(e.part_drums(0), "part one turns drum");
+    assert_eq!(panel.screen(&mut e, 4_000).name, ">Part Mode: Drum");
+    panel.button(&mut e, Button::Arrow(Pair::Instrument, Dir::Left));
+    assert!(!e.part_drums(0), "and back to normal");
+    // Bend Range steps in semitones from the GS +2.
+    panel.button(&mut e, Button::All);
+    assert_eq!(panel.screen(&mut e, 4_000).name, ">Bend Range: +2");
+    panel.button(&mut e, Button::Arrow(Pair::Instrument, Dir::Right));
+    assert_eq!(e.part_bend_range(0), 3);
+    // The PART arrows move between parts with the item held.
     panel.button(&mut e, Button::Arrow(Pair::Part, Dir::Right));
-    assert_eq!(panel.screen(&mut e, 4_000).part, "01");
-    panel.button(&mut e, Button::Mute); // restore everything
-    assert_eq!(e.part_cc_value(11, 0x05), 0, "the snapshot covers all");
+    let screen = panel.screen(&mut e, 4_000);
+    assert_eq!(screen.part, "02");
+    assert_eq!(screen.name, ">Bend Range: +2", "part two's own value");
+    // The vibrato family prints the unit's signed offsets and lands
+    // on the wire as 64 +/- 50.
+    for _ in 0..11 {
+        panel.button(&mut e, Button::All);
+    }
+    assert_eq!(panel.screen(&mut e, 4_000).name, ">Vib. Rate: 0");
+    panel.button(&mut e, Button::Arrow(Pair::Instrument, Dir::Right));
+    assert_eq!(panel.screen(&mut e, 4_000).name, ">Vib. Rate: +1");
+    assert_eq!(e.part_nrpn_wire(1, 0x01, 0x08), 65, "the NRPN lands");
+    // The extras sit past Release Time: a pedal shown as On/Off.
+    for _ in 0..8 {
+        panel.button(&mut e, Button::All);
+    }
+    assert_eq!(panel.screen(&mut e, 4_000).name, ">Sostenuto: Off");
+    panel.button(&mut e, Button::Arrow(Pair::Instrument, Dir::Right));
+    assert_eq!(e.part_cc_value(1, 0x42), 127, "the pedal presses");
+    panel.button(&mut e, Button::Both(Pair::Part));
+    assert_eq!(panel.screen(&mut e, 5_000).part, "02", "home on part two");
+}
+
+/// Variation select (the INSTRUMENT pair): the variation number takes
+/// the instrument field with a slash on the name, the arrows walk the
+/// banks the font offers, and the mark rides home on the name.
+#[test]
+fn variation_select_walks_the_fonts_banks() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    let mut panel = FrontPanel::default();
+    settled(&mut panel, &mut e);
+    panel.button(&mut e, Button::Both(Pair::Instrument));
+    let screen = panel.screen(&mut e, 4_000);
+    assert_eq!(screen.instrument, "000", "the capital's variation number");
+    assert!(screen.name.starts_with('/'), "the slash marks the edit");
+    // GeneralUser GS carries a detuned piano on a variation bank.
+    if e.neighbour_variation(0, 1).is_some_and(|b| b != 0) {
+        panel.button(&mut e, Button::Arrow(Pair::Instrument, Dir::Right));
+        let bank = e.part_bank(0);
+        assert_ne!(bank, 0, "the arrow walked to a real bank");
+        panel.button(&mut e, Button::Both(Pair::Instrument));
+        let screen = panel.screen(&mut e, 4_000);
+        let mark = if bank == 127 { '#' } else { '+' };
+        assert!(
+            screen.name.starts_with(mark),
+            "the variation wears its mark home: {}",
+            screen.name
+        );
+    } else {
+        panel.button(&mut e, Button::Both(Pair::Instrument));
+    }
 }
 
 /// A solo is a passing state: MUTE takes it back with the press
@@ -758,4 +788,65 @@ fn solo_stands_down_for_any_press() {
     assert_eq!(e.monitor(), Monitor::Off, "any press stands the solo down");
     assert_eq!(panel.screen(&mut e, 5_000).part, "ALL", "and means itself");
     panel.button(&mut e, Button::All);
+}
+
+/// The eight display types dress the same values differently: Type 2
+/// draws a single segment, Type 5 the classic bars in negative, and
+/// the staircase views wear the style too.
+#[test]
+fn the_display_types_dress_the_bars() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    let mut panel = FrontPanel::default();
+    settled(&mut panel, &mut e);
+    // The LEVEL staircase in the classic style: solid columns.
+    panel.button(&mut e, Button::Both(Pair::Level));
+    let bars = panel.screen(&mut e, 4_000).bars;
+    assert!(
+        bars.iter().all(|&c| c != 0 && (c & c.wrapping_add(1)) == 0),
+        "type 1 columns are solid from the floor"
+    );
+    // Type 2: one segment per column.
+    e.set_display_type(2);
+    let bars = panel.screen(&mut e, 4_000).bars;
+    assert!(
+        bars.iter().all(|&c| c.count_ones() == 1),
+        "type 2 draws a single segment"
+    );
+    // Type 5: type 1 in negative.
+    e.set_display_type(5);
+    let bars = panel.screen(&mut e, 4_000).bars;
+    assert!(
+        bars.iter().all(|&c| (!c & (!c).wrapping_add(1)) == 0),
+        "type 5 is the bars inverted"
+    );
+    panel.button(&mut e, Button::Both(Pair::Level));
+}
+
+/// The monitor blinks the MUTE lamp for as long as it stands, and the
+/// demo transport leaves for home on ALL and MUTE together.
+#[test]
+fn the_monitor_blinks_and_the_demo_leaves() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    let mut panel = FrontPanel::default();
+    settled(&mut panel, &mut e);
+    panel.button(&mut e, Button::Monitor);
+    let screen = panel.screen(&mut e, 4_000);
+    assert!(screen.mute_blink, "the monitor blinks the MUTE lamp");
+    assert!(!screen.mute_led, "nothing is muted underneath");
+    panel.button(&mut e, Button::Mute);
+    assert!(!panel.screen(&mut e, 4_000).mute_blink);
+
+    let mut panel = FrontPanel::default();
+    panel.power_on_held(&[Button::Both(Pair::Part)]);
+    assert_eq!(panel.screen(&mut e, 0).part, "S-1", "the demo greets");
+    panel.button(&mut e, Button::Monitor);
+    assert_eq!(
+        panel.screen(&mut e, 4_000).part,
+        "01",
+        "ALL and MUTE together leave for home"
+    );
 }

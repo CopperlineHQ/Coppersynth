@@ -70,6 +70,21 @@ pub(crate) struct Channel {
 
     pitch_bend: f32,
 
+    /// The unit's master tune in semitones, shared by every channel;
+    /// the synthesizer stamps it here so a voice's pitch math reads
+    /// one place.
+    master_tune: f32,
+    /// The playable window (Key Range L/H): notes outside it are not
+    /// sounded on this part.
+    key_range_lo: u8,
+    key_range_hi: u8,
+    /// The velocity curve (Velocity Sens Depth/Offset), 64/64 neutral.
+    velo_depth: u8,
+    velo_offset: u8,
+    /// Modulation depth: how far the mod wheel's full travel reaches,
+    /// with the GS factory 10 as the neutral scale.
+    mod_depth: u8,
+
     /// Every controller's last raw value, for the modulator sources. The
     /// named fields above stay authoritative for the synthesizer's own
     /// paths; this table answers for the arbitrary CCs a bank is free to
@@ -121,6 +136,12 @@ impl Channel {
             coarse_tune: 0,
             fine_tune: 0,
             pitch_bend: 0_f32,
+            master_tune: 0_f32,
+            key_range_lo: 0,
+            key_range_hi: 127,
+            velo_depth: 64,
+            velo_offset: 64,
+            mod_depth: 10,
             cc: [0; 128],
             last_data_type: DataType::None,
         };
@@ -171,6 +192,11 @@ impl Channel {
         self.pitch_bend_range = 2 << 7;
         self.coarse_tune = 0;
         self.fine_tune = 8192;
+        self.key_range_lo = 0;
+        self.key_range_hi = 127;
+        self.velo_depth = 64;
+        self.velo_offset = 64;
+        self.mod_depth = 10;
 
         self.pitch_bend = 0_f32;
 
@@ -586,7 +612,11 @@ impl Channel {
     }
 
     pub(crate) fn get_modulation(&self) -> f32 {
-        (50_f32 / 16383_f32) * self.modulation as f32
+        // The wheel's full travel spans 50 cents at the GS factory
+        // depth of 10, and Mod Depth rescales that reach -- capped
+        // where a vibrato becomes a siren.
+        let reach = (50_f32 * self.mod_depth as f32 / 10.0).min(600.0);
+        (reach / 16383_f32) * self.modulation as f32
     }
 
     pub(crate) fn get_volume(&self) -> f32 {
@@ -618,7 +648,67 @@ impl Channel {
     }
 
     pub(crate) fn get_tune(&self) -> f32 {
-        self.coarse_tune as f32 + (1_f32 / 8192_f32) * (self.fine_tune - 8192) as f32
+        self.master_tune
+            + self.coarse_tune as f32
+            + (1_f32 / 8192_f32) * (self.fine_tune - 8192) as f32
+    }
+
+    pub(crate) fn set_master_tune(&mut self, semitones: f32) {
+        self.master_tune = semitones;
+    }
+
+    pub(crate) fn bend_range_semitones(&self) -> u8 {
+        (self.pitch_bend_range >> 7) as u8
+    }
+
+    pub(crate) fn set_bend_range_semitones(&mut self, semitones: u8) {
+        self.pitch_bend_range = (semitones as i16) << 7;
+    }
+
+    pub(crate) fn mono(&self) -> bool {
+        self.mono_mode
+    }
+
+    pub(crate) fn set_percussion(&mut self, on: bool) {
+        self.is_percussion_channel = on;
+        self.pending_bank = None;
+        self.bank_number = if on { 128 } else { 0 };
+        self.patch_number = 0;
+    }
+
+    pub(crate) fn key_range(&self) -> (u8, u8) {
+        (self.key_range_lo, self.key_range_hi)
+    }
+
+    pub(crate) fn set_key_range(&mut self, lo: u8, hi: u8) {
+        self.key_range_lo = lo.min(127);
+        self.key_range_hi = hi.min(127);
+    }
+
+    pub(crate) fn velo_sens(&self) -> (u8, u8) {
+        (self.velo_depth, self.velo_offset)
+    }
+
+    pub(crate) fn set_velo_sens(&mut self, depth: u8, offset: u8) {
+        self.velo_depth = depth.min(127);
+        self.velo_offset = offset.min(127);
+    }
+
+    /// The received velocity through the part's sensitivity curve:
+    /// depth tilts the slope about the centre, offset lifts or sinks
+    /// the floor, 64/64 passing the wire through untouched.
+    pub(crate) fn shaped_velocity(&self, velocity: i32) -> i32 {
+        let shaped =
+            velocity as f32 * self.velo_depth as f32 / 64.0 + (self.velo_offset as f32 - 64.0);
+        (shaped as i32).clamp(1, 127)
+    }
+
+    pub(crate) fn mod_depth(&self) -> u8 {
+        self.mod_depth
+    }
+
+    pub(crate) fn set_mod_depth(&mut self, depth: u8) {
+        self.mod_depth = depth.min(127);
     }
 
     pub(crate) fn get_pitch_bend(&self) -> f32 {

@@ -750,3 +750,133 @@ fn nrpn_release_time_scales_the_tail() {
         "a stretched release rings longer (short {short}, long {long})"
     );
 }
+
+/// The battery-backed memory: everything the fascia can set survives a
+/// save and load into a fresh unit -- and with Back Up off in the
+/// saved bytes, only the system functions come back, the parts waking
+/// to the GS basic setting.
+#[test]
+fn the_saved_state_survives_the_night() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    e.set_device_id(20);
+    e.set_display_type(6);
+    e.set_peak_hold(3);
+    e.set_rx_inst_chg(false);
+    e.set_master_tune_tenths(4423);
+    e.set_reverb_type(1);
+    e.set_chorus_type(coppersynth::synth::ChorusType::Flanger);
+    e.set_part_drums(2, true);
+    e.set_part_bend_range(3, 12);
+    e.set_part_key_range(4, 40, 90);
+    e.set_part_velo_sens(5, 100, 70);
+    e.set_part_mono(6, true);
+    e.send_part_nrpn(7, 0x01, 0x08, 90);
+    e.set_part_rx_channel(8, None);
+    e.set_part_key_shift(1, -5);
+    let bytes = e.save_state();
+
+    let Some(mut fresh) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    fresh.load_state(&bytes);
+    assert_eq!(fresh.device_id(), 20);
+    assert_eq!(fresh.display_type(), 6);
+    assert_eq!(fresh.peak_hold(), 3);
+    assert!(!fresh.rx_inst_chg());
+    assert_eq!(fresh.master_tune_tenths(), 4423);
+    assert_eq!(fresh.reverb_type(), 1);
+    assert_eq!(fresh.chorus_type(), coppersynth::synth::ChorusType::Flanger);
+    assert!(fresh.part_drums(2), "part three wakes a drum part");
+    assert_eq!(fresh.part_bend_range(3), 12);
+    assert_eq!(fresh.part_key_range(4), (40, 90));
+    assert_eq!(fresh.part_velo_sens(5), (100, 70));
+    assert!(fresh.part_mono(6));
+    assert_eq!(fresh.part_nrpn_wire(7, 0x01, 0x08), 90);
+    assert_eq!(fresh.part_view(8).rx_channel, None);
+    assert_eq!(fresh.part_view(1).key_shift, -5);
+
+    // Back Up off: the system functions land, the parts wake to GS.
+    e.set_backup(false);
+    let bytes = e.save_state();
+    let Some(mut fresh) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    fresh.load_state(&bytes);
+    assert_eq!(fresh.device_id(), 20, "system functions always land");
+    assert!(!fresh.backup());
+    assert!(
+        !fresh.part_drums(2),
+        "the parts wake to the GS basic setting"
+    );
+    assert_eq!(fresh.part_bend_range(3), 2);
+
+    // Damaged bytes leave the unit as it stands.
+    let Some(mut fresh) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    fresh.load_state(&bytes[..20]);
+    assert_eq!(fresh.device_id(), 17);
+}
+
+/// A GS reset on the wire returns the unit to the GS basic setting --
+/// unless the Rx GS Reset switch says not to listen.
+#[test]
+fn the_wire_gs_reset_honours_its_switch() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    const GS_RESET: [u8; 11] = [
+        0xF0, 0x41, 0x10, 0x42, 0x12, 0x40, 0x00, 0x7F, 0x00, 0x41, 0xF7,
+    ];
+    e.set_part_drums(2, true);
+    e.set_master_reverb(10);
+    send(&mut e, &GS_RESET);
+    assert!(!e.part_drums(2), "the reset puts the parts home");
+    assert_eq!(e.master_reverb(), 64);
+    assert_eq!(e.device_id(), 17, "system functions stand");
+
+    e.set_rx_gs_reset(false);
+    e.set_master_reverb(10);
+    send(&mut e, &GS_RESET);
+    assert_eq!(e.master_reverb(), 10, "the switch keeps the reset out");
+}
+
+/// The Rx SysEx switch drops exclusives whole: a display letter never
+/// arrives, while channel messages play on.
+#[test]
+fn the_rx_sysex_switch_drops_exclusives() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    e.set_rx_sysex(false);
+    // The SC-55 display letter "HI" -- normally a panel feed.
+    let mut msg = vec![0xF0, 0x41, 0x10, 0x45, 0x12, 0x10, 0x00, 0x00];
+    msg.extend_from_slice(b"HI");
+    let sum: u32 = msg[5..].iter().map(|&b| b as u32).sum();
+    msg.push(((128 - (sum % 128)) % 128) as u8);
+    msg.push(0xF7);
+    send(&mut e, &msg);
+    assert!(
+        e.take_panel_feed().is_empty(),
+        "the letter fell on the floor"
+    );
+    // A note after the dropped exclusive still sounds.
+    send(&mut e, &[0x90, 60, 100]);
+    assert!(e.voices().0 > 0, "channel traffic plays on");
+}
+
+/// Key Range gates the part's notes at the front door, and the
+/// velocity curve shapes what passes.
+#[test]
+fn key_range_gates_and_the_curve_shapes() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    e.set_part_key_range(0, 48, 72);
+    send(&mut e, &[0x90, 40, 100]);
+    assert_eq!(e.voices().0, 0, "below the window, no voice");
+    send(&mut e, &[0x90, 60, 100]);
+    assert!(e.voices().0 > 0, "inside the window, the note sounds");
+}
