@@ -775,6 +775,11 @@ fn the_saved_state_survives_the_night() {
     e.send_part_nrpn(7, 0x01, 0x08, 90);
     e.set_part_rx_channel(8, None);
     e.set_part_key_shift(1, -5);
+    e.set_part_voice_reserve(4, 10);
+    e.set_part_fine_tune(5, -7);
+    e.set_part_rx_bank(6, false);
+    e.set_part_rx_nrpn(7, false);
+    e.set_part_bend_range(8, -12);
     let bytes = e.save_state();
 
     let Some(mut fresh) = engine(Mt32Mode::Off) else {
@@ -796,6 +801,11 @@ fn the_saved_state_survives_the_night() {
     assert_eq!(fresh.part_nrpn_wire(7, 0x01, 0x08), 90);
     assert_eq!(fresh.part_view(8).rx_channel, None);
     assert_eq!(fresh.part_view(1).key_shift, -5);
+    assert_eq!(fresh.part_voice_reserve(4), 10);
+    assert_eq!(fresh.part_fine_tune(5), -7);
+    assert!(!fresh.part_rx_bank(6));
+    assert!(!fresh.part_rx_nrpn(7));
+    assert_eq!(fresh.part_bend_range(8), -12);
 
     // Back Up off: the system functions land, the parts wake to GS.
     e.set_backup(false);

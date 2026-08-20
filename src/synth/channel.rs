@@ -660,12 +660,24 @@ impl Channel {
         self.master_tune = semitones;
     }
 
-    pub(crate) fn bend_range_semitones(&self) -> u8 {
-        (self.pitch_bend_range >> 7) as u8
+    pub(crate) fn bend_range_semitones(&self) -> i8 {
+        (self.pitch_bend_range >> 7) as i8
     }
 
-    pub(crate) fn set_bend_range_semitones(&mut self, semitones: u8) {
+    pub(crate) fn set_bend_range_semitones(&mut self, semitones: i8) {
         self.pitch_bend_range = (semitones as i16) << 7;
+    }
+
+    /// Fine tune as the panel's -12..=+12: the RPN's semitone either
+    /// way, in twelve steps.
+    pub(crate) fn fine_tune_display(&self) -> i8 {
+        let twelfths = (self.fine_tune as i32 - 8192) * 12;
+        let rounding = if twelfths >= 0 { 4096 } else { -4096 };
+        ((twelfths + rounding) / 8192) as i8
+    }
+
+    pub(crate) fn set_fine_tune_display(&mut self, value: i8) {
+        self.fine_tune = (8192 + (value as i32) * 8192 / 12).clamp(0, 16383) as i16;
     }
 
     pub(crate) fn mono(&self) -> bool {

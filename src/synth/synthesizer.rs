@@ -824,17 +824,31 @@ impl Synthesizer {
         }
     }
 
-    /// The part's bend range in semitones.
-    pub fn channel_bend_range(&self, channel: i32) -> u8 {
+    /// The part's bend range in semitones, signed.
+    pub fn channel_bend_range(&self, channel: i32) -> i8 {
         self.channels
             .get(channel as usize)
             .map(|c| c.bend_range_semitones())
             .unwrap_or(2)
     }
 
-    pub fn set_channel_bend_range(&mut self, channel: i32, semitones: u8) {
+    pub fn set_channel_bend_range(&mut self, channel: i32, semitones: i8) {
         if let Some(c) = self.channels.get_mut(channel as usize) {
             c.set_bend_range_semitones(semitones);
+        }
+    }
+
+    /// The part's fine tune, the panel's -12..=+12.
+    pub fn channel_fine_tune_display(&self, channel: i32) -> i8 {
+        self.channels
+            .get(channel as usize)
+            .map(|c| c.fine_tune_display())
+            .unwrap_or(0)
+    }
+
+    pub fn set_channel_fine_tune_display(&mut self, channel: i32, value: i8) {
+        if let Some(c) = self.channels.get_mut(channel as usize) {
+            c.set_fine_tune_display(value);
         }
     }
 

@@ -122,6 +122,13 @@ struct Parts {
     /// Where each sounding note landed after the shift, so its note-off
     /// finds it whatever the shift has become since.
     sounded: [[u8; 128]; PARTS],
+    /// Voice Reserve, as the unit stores and shows it. Our well has
+    /// more voices than the hardware's, so nothing starves and the
+    /// number never has to act; it is kept because the unit keeps it.
+    voice_rsv: [u8; PARTS],
+    /// Per-part reception switches: bank select, and NRPN.
+    rx_bank: [bool; PARTS],
+    rx_nrpn: [bool; PARTS],
 }
 
 impl Parts {
@@ -138,6 +145,11 @@ impl Parts {
             wire_level: [100; PARTS],
             locks: [0; PARTS],
             sounded: [[SILENT; 128]; PARTS],
+            // The GS factory reserve: six for the drum part, two each
+            // for the melodic fifteen.
+            voice_rsv: std::array::from_fn(|p| if p == DRUM_PART { 6 } else { 2 }),
+            rx_bank: [true; PARTS],
+            rx_nrpn: [true; PARTS],
         }
     }
 }
@@ -410,6 +422,14 @@ impl Engine {
                 0xC0 if !self.rx_inst_chg => {}
                 0xC0 if self.parts.locks[part] & LOCK_PROGRAM != 0 => {}
                 0xB0 => {
+                    // The part's own reception switches: bank select
+                    // and NRPN fall on the floor when turned away.
+                    if matches!(data1, 0 | 32) && !self.parts.rx_bank[part] {
+                        continue;
+                    }
+                    if matches!(data1, 98 | 99) && !self.parts.rx_nrpn[part] {
+                        continue;
+                    }
                     let locks = self.parts.locks[part];
                     let handled = match data1 {
                         7 => {
@@ -1097,14 +1117,61 @@ impl Engine {
         }
     }
 
-    /// Bend Range in semitones, 0..=24.
-    pub fn part_bend_range(&self, part: usize) -> u8 {
+    /// Bend Range in semitones, -24..=+24 -- negative bends the other
+    /// way, as the unit's own panel allows.
+    pub fn part_bend_range(&self, part: usize) -> i8 {
         self.synth.channel_bend_range(part as i32)
     }
 
-    pub fn set_part_bend_range(&mut self, part: usize, semitones: u8) {
+    pub fn set_part_bend_range(&mut self, part: usize, semitones: i8) {
         self.synth
-            .set_channel_bend_range(part as i32, semitones.min(24));
+            .set_channel_bend_range(part as i32, semitones.clamp(-24, 24));
+    }
+
+    /// Fine Tune as the unit shows it, -12..=+12: the full RPN fine
+    /// range of a semitone either way, in the panel's twelve steps.
+    pub fn part_fine_tune(&self, part: usize) -> i8 {
+        self.synth.channel_fine_tune_display(part as i32)
+    }
+
+    pub fn set_part_fine_tune(&mut self, part: usize, value: i8) {
+        self.synth
+            .set_channel_fine_tune_display(part as i32, value.clamp(-12, 12));
+    }
+
+    /// Voice Reserve, kept and shown as the unit keeps it. This well
+    /// runs deeper than the hardware's, so nothing ever starves and
+    /// the number never has to act.
+    pub fn part_voice_reserve(&self, part: usize) -> u8 {
+        self.parts.voice_rsv.get(part).copied().unwrap_or(2)
+    }
+
+    pub fn set_part_voice_reserve(&mut self, part: usize, voices: u8) {
+        if let Some(slot) = self.parts.voice_rsv.get_mut(part) {
+            *slot = voices.min(28);
+        }
+    }
+
+    /// The part's bank-select reception switch.
+    pub fn part_rx_bank(&self, part: usize) -> bool {
+        self.parts.rx_bank.get(part).copied().unwrap_or(true)
+    }
+
+    pub fn set_part_rx_bank(&mut self, part: usize, on: bool) {
+        if let Some(slot) = self.parts.rx_bank.get_mut(part) {
+            *slot = on;
+        }
+    }
+
+    /// The part's NRPN reception switch.
+    pub fn part_rx_nrpn(&self, part: usize) -> bool {
+        self.parts.rx_nrpn.get(part).copied().unwrap_or(true)
+    }
+
+    pub fn set_part_rx_nrpn(&mut self, part: usize, on: bool) {
+        if let Some(slot) = self.parts.rx_nrpn.get_mut(part) {
+            *slot = on;
+        }
     }
 
     /// Key Range L/H as note numbers.
@@ -1186,7 +1253,7 @@ impl Engine {
     pub fn save_state(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(512);
         out.extend_from_slice(b"CSYN");
-        out.push(1);
+        out.push(2);
         // System functions, honoured regardless of Back Up.
         out.push(self.device_id);
         out.push(self.rx_inst_chg as u8);
@@ -1221,7 +1288,7 @@ impl Engine {
             for controller in [10u8, 91, 93, 1, 5, 11, 65, 66, 67] {
                 out.push(cc(controller));
             }
-            out.push(self.part_bend_range(part));
+            out.push(self.part_bend_range(part) as u8);
             out.push(lo);
             out.push(hi);
             out.push(depth);
@@ -1240,6 +1307,10 @@ impl Engine {
             ] {
                 out.push(self.part_nrpn_wire(part, msb, lsb));
             }
+            out.push(self.part_voice_reserve(part));
+            out.push(self.part_fine_tune(part) as u8);
+            out.push(self.part_rx_bank(part) as u8);
+            out.push(self.part_rx_nrpn(part) as u8);
         }
         out
     }
@@ -1251,8 +1322,8 @@ impl Engine {
     pub fn load_state(&mut self, bytes: &[u8]) {
         const SYSTEM: usize = 5 + 7;
         const MASTERS: usize = 9;
-        const PART: usize = 6 + 2 + 9 + 7 + 8;
-        if bytes.len() < SYSTEM + MASTERS + PARTS * PART || &bytes[..4] != b"CSYN" || bytes[4] != 1
+        const PART: usize = 6 + 2 + 9 + 7 + 8 + 4;
+        if bytes.len() < SYSTEM + MASTERS + PARTS * PART || &bytes[..4] != b"CSYN" || bytes[4] != 2
         {
             return;
         }
@@ -1300,11 +1371,15 @@ impl Engine {
                     p[8 + i].min(127) as i32,
                 );
             }
-            self.set_part_bend_range(part, p[17]);
+            self.set_part_bend_range(part, p[17] as i8);
             self.set_part_key_range(part, p[18], p[19]);
             self.set_part_velo_sens(part, p[20], p[21]);
             self.set_part_mod_depth(part, p[22]);
             self.synth.set_channel_mono(part as i32, p[23] != 0);
+            self.set_part_voice_reserve(part, p[32]);
+            self.set_part_fine_tune(part, p[33] as i8);
+            self.set_part_rx_bank(part, p[34] != 0);
+            self.set_part_rx_nrpn(part, p[35] != 0);
             for (i, (msb, lsb)) in [
                 (0x01u8, 0x08u8),
                 (0x01, 0x09),

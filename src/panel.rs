@@ -145,30 +145,34 @@ enum Mode {
     },
 }
 
-/// The part menu, exactly the mkII's own list and order, with the
-/// wire-only pedals appended as this unit's extras. Every entry is a
-/// label and how the value reads, steps and prints.
-const PART_MENU: [(&str, PartItem); 22] = [
+/// The part menu: the mkII's own list, order and spelling, checked
+/// against a real unit -- Part Mode is simply the first setting --
+/// with the wire-only pedals appended as this unit's extras.
+const PART_MENU: [(&str, PartItem); 26] = [
     ("Part Mode", PartItem::Mode),
+    ("M/P Mode", PartItem::MonoPoly),
+    ("Voice Rsv", PartItem::VoiceReserve),
+    ("Fine Tune", PartItem::FineTune),
+    ("Rx Bank Sel", PartItem::RxBank),
+    ("Rx NRPN", PartItem::RxNrpn),
     ("Bend Range", PartItem::BendRange),
     ("Mod. Depth", PartItem::ModDepth),
     ("K. Range L", PartItem::KeyRangeL),
     ("K. Range H", PartItem::KeyRangeH),
     ("Velo Depth", PartItem::VeloDepth),
     ("Velo Offset", PartItem::VeloOffset),
-    ("M/P Mode", PartItem::MonoPoly),
-    ("Portamento", PartItem::Switch(0x41)),
-    ("Porta. Tm", PartItem::Cc(0x05)),
-    ("Modulation", PartItem::Cc(0x01)),
-    ("Expression", PartItem::Cc(0x0B)),
     ("Vib. Rate", PartItem::Offset(0x08)),
     ("Vib. Depth", PartItem::Offset(0x09)),
     ("Vib. Delay", PartItem::Offset(0x0A)),
     ("Cutoff Freq", PartItem::Offset(0x20)),
     ("Resonance", PartItem::Offset(0x21)),
-    ("Attack Tm", PartItem::Offset(0x63)),
-    ("Decay Tm", PartItem::Offset(0x64)),
-    ("Release Tm", PartItem::Offset(0x66)),
+    ("Attack Tm.", PartItem::Offset(0x63)),
+    ("Decay Tm.", PartItem::Offset(0x64)),
+    ("Release Tm.", PartItem::Offset(0x66)),
+    ("Modulation", PartItem::Cc(0x01)),
+    ("Expression", PartItem::Cc(0x0B)),
+    ("Portamento", PartItem::Switch(0x41)),
+    ("Porta. Tm.", PartItem::Cc(0x05)),
     ("Sostenuto", PartItem::Switch(0x42)),
     ("Soft Pedal", PartItem::Switch(0x43)),
 ];
@@ -178,7 +182,16 @@ const PART_MENU: [(&str, PartItem); 22] = [
 enum PartItem {
     /// Norm or Drum: which kind of musician the part is.
     Mode,
-    /// RPN 0 in semitones, 0..=24.
+    /// Poly or Mono.
+    MonoPoly,
+    /// Voice Reserve, kept as the unit keeps it.
+    VoiceReserve,
+    /// Fine Tune, -12..=+12 across the RPN's semitone each way.
+    FineTune,
+    /// The part's reception switches.
+    RxBank,
+    RxNrpn,
+    /// RPN 0 in semitones, -24..=+24.
     BendRange,
     /// How far the mod wheel reaches, GS factory 10.
     ModDepth,
@@ -188,8 +201,6 @@ enum PartItem {
     /// The velocity curve, 64/64 neutral.
     VeloDepth,
     VeloOffset,
-    /// Poly or Mono.
-    MonoPoly,
     /// A plain controller, 0-127.
     Cc(u8),
     /// A pedal controller shown as On/Off.
@@ -203,13 +214,17 @@ impl PartItem {
     fn value(self, engine: &Engine, part: usize) -> i32 {
         match self {
             Self::Mode => engine.part_drums(part) as i32,
+            Self::MonoPoly => engine.part_mono(part) as i32,
+            Self::VoiceReserve => engine.part_voice_reserve(part) as i32,
+            Self::FineTune => engine.part_fine_tune(part) as i32,
+            Self::RxBank => engine.part_rx_bank(part) as i32,
+            Self::RxNrpn => engine.part_rx_nrpn(part) as i32,
             Self::BendRange => engine.part_bend_range(part) as i32,
             Self::ModDepth => engine.part_mod_depth(part) as i32,
             Self::KeyRangeL => engine.part_key_range(part).0 as i32,
             Self::KeyRangeH => engine.part_key_range(part).1 as i32,
             Self::VeloDepth => engine.part_velo_sens(part).0 as i32,
             Self::VeloOffset => engine.part_velo_sens(part).1 as i32,
-            Self::MonoPoly => engine.part_mono(part) as i32,
             Self::Cc(cc) | Self::Switch(cc) => engine.part_cc_value(part, cc) as i32,
             Self::Offset(lsb) => engine.part_nrpn_wire(part, 0x01, lsb) as i32 - 64,
         }
@@ -218,7 +233,12 @@ impl PartItem {
     fn set(self, engine: &mut Engine, part: usize, value: i32) {
         match self {
             Self::Mode => engine.set_part_drums(part, value != 0),
-            Self::BendRange => engine.set_part_bend_range(part, value as u8),
+            Self::MonoPoly => engine.set_part_mono(part, value != 0),
+            Self::VoiceReserve => engine.set_part_voice_reserve(part, value as u8),
+            Self::FineTune => engine.set_part_fine_tune(part, value as i8),
+            Self::RxBank => engine.set_part_rx_bank(part, value != 0),
+            Self::RxNrpn => engine.set_part_rx_nrpn(part, value != 0),
+            Self::BendRange => engine.set_part_bend_range(part, value as i8),
             Self::ModDepth => engine.set_part_mod_depth(part, value as u8),
             Self::KeyRangeL => {
                 let (_, hi) = engine.part_key_range(part);
@@ -236,7 +256,6 @@ impl PartItem {
                 let (depth, _) = engine.part_velo_sens(part);
                 engine.set_part_velo_sens(part, depth, value as u8);
             }
-            Self::MonoPoly => engine.set_part_mono(part, value != 0),
             Self::Cc(cc) => engine.send_part_cc(part, cc, value as u8),
             Self::Switch(cc) => engine.send_part_cc(part, cc, if value != 0 { 127 } else { 0 }),
             Self::Offset(lsb) => engine.send_part_nrpn(part, 0x01, lsb, (value + 64) as u8),
@@ -246,8 +265,10 @@ impl PartItem {
     /// The value's travel, in its own display units.
     fn range(self) -> (i32, i32) {
         match self {
-            Self::Mode | Self::MonoPoly | Self::Switch(_) => (0, 1),
-            Self::BendRange => (0, 24),
+            Self::Mode | Self::MonoPoly | Self::Switch(_) | Self::RxBank | Self::RxNrpn => (0, 1),
+            Self::VoiceReserve => (0, 28),
+            Self::FineTune => (-12, 12),
+            Self::BendRange => (-24, 24),
             Self::ModDepth | Self::VeloDepth | Self::VeloOffset | Self::Cc(_) => (0, 127),
             Self::KeyRangeL | Self::KeyRangeH => (0, 127),
             Self::Offset(_) => (-50, 50),
@@ -260,7 +281,8 @@ impl PartItem {
             Self::Mode => if value != 0 { "Drum" } else { "Norm" }.to_string(),
             Self::MonoPoly => if value != 0 { "Mono" } else { "Poly" }.to_string(),
             Self::Switch(_) => if value >= 64 { "On" } else { "Off" }.to_string(),
-            Self::BendRange => format!("+{value}"),
+            Self::RxBank | Self::RxNrpn => if value != 0 { "On" } else { "Off" }.to_string(),
+            Self::BendRange | Self::FineTune => shift_label(value as i8),
             Self::KeyRangeL | Self::KeyRangeH => note_name(value as u8),
             Self::Offset(_) => shift_label(value.clamp(-50, 50) as i8),
             _ => value.to_string(),
@@ -382,6 +404,15 @@ impl SystemItem {
             _ => if value != 0 { "On" } else { "Off" }.to_string(),
         }
     }
+}
+
+/// The menu line as the unit composes it: the item's name at the
+/// left, the value right-justified so its last character sits in the
+/// twentieth column.
+fn menu_line(name: &str, value: &str) -> String {
+    let label = format!(">{name}:");
+    let pad = NAME_COLS.saturating_sub(label.len() + value.len());
+    format!("{label}{}{value}", " ".repeat(pad))
 }
 
 /// The note name for a key number, spaced as the unit prints it:
@@ -613,12 +644,12 @@ impl FrontPanel {
             match b {
                 Button::All => {
                     self.mode = Mode::SystemMenu {
-                        item: (item + 1) % SYSTEM_MENU.len(),
+                        item: item.saturating_sub(1),
                     };
                 }
                 Button::Mute => {
                     self.mode = Mode::SystemMenu {
-                        item: (item + SYSTEM_MENU.len() - 1) % SYSTEM_MENU.len(),
+                        item: (item + 1).min(SYSTEM_MENU.len() - 1),
                     };
                 }
                 Button::Arrow(Pair::Instrument, dir) => {
@@ -633,22 +664,17 @@ impl FrontPanel {
             return None;
         }
         if let Mode::PartMenu { item } = self.mode {
-            // ALL and MUTE walk the ordinary items; Part Mode stands
-            // apart at slot zero, reached only by ALL and MUTE pressed
-            // together -- the manual's own arrangement.
-            let walked = PART_MENU.len() - 1;
+            // ALL walks back toward Part Mode at the head, MUTE walks
+            // forward; neither wraps -- checked against a real unit.
             match b {
-                Button::Monitor => {
-                    self.mode = Mode::PartMenu { item: 0 };
-                }
                 Button::All => {
                     self.mode = Mode::PartMenu {
-                        item: if item >= walked { 1 } else { item + 1 },
+                        item: item.saturating_sub(1),
                     };
                 }
                 Button::Mute => {
                     self.mode = Mode::PartMenu {
-                        item: if item <= 1 { walked } else { item - 1 },
+                        item: (item + 1).min(PART_MENU.len() - 1),
                     };
                 }
                 Button::Arrow(Pair::Instrument, dir) => {
@@ -783,10 +809,7 @@ impl FrontPanel {
                 self.mode = if self.all {
                     Mode::SystemMenu { item: 0 }
                 } else {
-                    // The part menu opens on its first walked item;
-                    // Part Mode sits apart, behind ALL and MUTE
-                    // together.
-                    Mode::PartMenu { item: 1 }
+                    Mode::PartMenu { item: 0 }
                 };
             }
             // The INSTRUMENT pair opens variation select on a part.
@@ -883,7 +906,7 @@ impl FrontPanel {
                 let (name, kind) = SYSTEM_MENU[item];
                 screen.part = "ALL".to_string();
                 screen.instrument = String::new();
-                screen.name = format!(">{name}: {}", kind.print(kind.value(engine)));
+                screen.name = menu_line(name, &kind.print(kind.value(engine)));
                 dash_values(&mut screen);
                 screen.all_led = true;
             }
@@ -891,7 +914,7 @@ impl FrontPanel {
                 let (name, kind) = PART_MENU[item];
                 screen.part = format!("{:02}", self.part + 1);
                 screen.instrument = String::new();
-                screen.name = format!(">{name}: {}", kind.print(kind.value(engine, self.part)));
+                screen.name = menu_line(name, &kind.print(kind.value(engine, self.part)));
                 dash_values(&mut screen);
                 screen.all_led = false;
             }
