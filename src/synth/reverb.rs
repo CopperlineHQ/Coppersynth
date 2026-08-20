@@ -140,20 +140,24 @@ impl Reverb {
     pub(crate) fn of_type(sample_rate: i32, reverb_type: u8) -> Self {
         let mut reverb = Reverb::new(sample_rate);
         let (room, damp, width) = match reverb_type {
-            0 => (0.30, 0.55, 1.0),
-            1 => (0.22, 0.65, 1.0),
-            2 => (0.38, 0.50, 1.0),
-            3 => (0.46, 0.45, 1.0),
+            0 => (0.30, 0.55, 1.35),
+            1 => (0.22, 0.65, 1.35),
+            2 => (0.38, 0.50, 1.35),
+            3 => (0.46, 0.45, 1.35),
             5 => (0.55, 0.08, 0.7),
             6 => {
                 reverb.echo = Some(Echo::new(sample_rate, 0.32, 0.40, false));
+                // The gain follows the rack fitted; without this the
+                // echo would be fed at the rooms' whisper.
+                reverb.update();
                 return reverb;
             }
             7 => {
                 reverb.echo = Some(Echo::new(sample_rate, 0.28, 0.45, true));
+                reverb.update();
                 return reverb;
             }
-            _ => (Reverb::INITIAL_ROOM, Reverb::INITIAL_DAMP, 1.0),
+            _ => (Reverb::INITIAL_ROOM, Reverb::INITIAL_DAMP, 1.35),
         };
         reverb.set_room_size(room);
         reverb.set_damp(damp);
@@ -223,8 +227,10 @@ impl Reverb {
             apf.process(output_right);
         }
 
-        // With the default settings, we can skip this part.
-        if 1_f32 - self.wet1 > 1.0E-3_f32 || self.wet2 > 1.0E-3_f32 {
+        // A unity matrix can be skipped; anything else -- including
+        // the widths past 1.0, whose cross term is negative -- must
+        // run.
+        if (1_f32 - self.wet1).abs() > 1.0E-3_f32 || self.wet2.abs() > 1.0E-3_f32 {
             for t in 0..input_length {
                 let left = output_left[t];
                 let right = output_right[t];
@@ -299,7 +305,7 @@ impl Echo {
     /// The feed into the line, sized so a full send's first repeat
     /// stands about half as tall as the note that made it (the return
     /// multiplies by the rack's own 4.0).
-    const INPUT_GAIN: f32 = 0.125;
+    const INPUT_GAIN: f32 = 0.18;
 
     fn new(sample_rate: i32, seconds: f32, feedback: f32, crossed: bool) -> Self {
         let len = ((sample_rate as f32 * seconds) as usize).max(1);

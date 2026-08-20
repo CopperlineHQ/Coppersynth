@@ -131,6 +131,12 @@ pub(crate) struct Chorus {
 }
 
 impl Chorus {
+    /// The widening matrix: how much of each side is subtracted from
+    /// the other, and the make-up that keeps the wet's level where it
+    /// was.
+    const CROSS: f32 = 0.6;
+    const CROSS_MAKEUP: f32 = 1.2;
+
     /// A chorus running the given type's character.
     pub(crate) fn of_type(sample_rate: i32, chorus_type: ChorusType) -> Self {
         let (delay, depth, rate, feedback) = chorus_type.params();
@@ -238,6 +244,15 @@ impl Chorus {
             if self.buffer_index == buffer_length {
                 self.buffer_index = 0;
             }
+
+            // The wet leaves through a widening matrix: each side
+            // subtracts a share of the other, so the two sweeping taps
+            // stop agreeing down the middle and the doubling spreads
+            // across the stage. The feedback above took the raw taps,
+            // so the character is untouched.
+            let (l, r) = (output_left[t], output_right[t]);
+            output_left[t] = (l - Chorus::CROSS * r) * Chorus::CROSS_MAKEUP;
+            output_right[t] = (r - Chorus::CROSS * l) * Chorus::CROSS_MAKEUP;
         }
     }
 
