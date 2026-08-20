@@ -199,6 +199,9 @@ pub struct Engine {
     /// Whether the byte stream is inside a sysex message, for the Rx
     /// SysEx switch to skip one whole.
     in_sysex: bool,
+    /// Whether MIDI IN is ignored wholesale -- demo mode closes the
+    /// door, as the hardware does, even between songs.
+    wire_closed: bool,
 }
 
 impl Engine {
@@ -289,6 +292,7 @@ impl Engine {
             peak_hold: 1,
             master_tune_tenths: 4400,
             in_sysex: false,
+            wire_closed: false,
         };
         engine.set_master_volume_cc(127);
         Ok(engine)
@@ -306,8 +310,9 @@ impl Engine {
 
     /// Take one byte off the serial line.
     pub fn write_byte(&mut self, byte: u8) {
-        // A unit playing its demo ignores MIDI IN, as the hardware does.
-        if self.demo.is_some() {
+        // A unit in its demo mode ignores MIDI IN, as the hardware
+        // does -- between songs as much as during one.
+        if self.wire_closed || self.demo.is_some() {
             return;
         }
         // The Rx SysEx switch: off, exclusives fall on the floor whole,
@@ -938,6 +943,11 @@ impl Engine {
 
     pub fn set_device_id(&mut self, id: u8) {
         self.device_id = id.clamp(1, 32);
+    }
+
+    /// Close or open MIDI IN wholesale: demo mode's door.
+    pub fn set_wire_closed(&mut self, closed: bool) {
+        self.wire_closed = closed;
     }
 
     /// The ALL-and-MUTE monitor.

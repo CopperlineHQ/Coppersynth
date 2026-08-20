@@ -260,7 +260,7 @@ fn the_mt32_prompt_enables_translation() {
         return;
     };
     let mut panel = FrontPanel::default();
-    panel.power_on_held(&[Button::Arrow(Pair::Instrument, Dir::Left)]);
+    panel.power_on_held(&mut e, &[Button::Arrow(Pair::Instrument, Dir::Left)]);
     let prompt = panel.screen(&mut e, 0);
     assert_eq!(prompt.name, "Init MT-32, Sure?");
     assert!(prompt.all_led, "the lamps flash on this half-second");
@@ -282,7 +282,7 @@ fn the_mt32_prompt_disables_translation() {
         return;
     };
     let mut panel = FrontPanel::default();
-    panel.power_on_held(&[Button::Arrow(Pair::Instrument, Dir::Left)]);
+    panel.power_on_held(&mut e, &[Button::Arrow(Pair::Instrument, Dir::Left)]);
     panel.screen(&mut e, 0);
     let request = panel.button(&mut e, Button::Mute);
     assert_eq!(request, Some(PanelRequest::Mt32Mode(Mt32Mode::Off)));
@@ -301,7 +301,10 @@ fn the_debug_print_rolls_its_credits() {
         return;
     };
     let mut panel = FrontPanel::default();
-    panel.power_on_held(&[Button::Both(Pair::MidiCh), Button::Both(Pair::Instrument)]);
+    panel.power_on_held(
+        &mut e,
+        &[Button::Both(Pair::MidiCh), Button::Both(Pair::Instrument)],
+    );
     let screen = panel.screen(&mut e, 0);
     let date = env!("COPPERSYNTH_RELEASE_DATE");
     let expect = if date.is_empty() {
@@ -351,14 +354,14 @@ fn the_font_prompt_initialises_after_a_pause() {
     // Init GS first: the runtime settings return to the GS basic
     // setting and nothing asks the host for anything.
     let mut panel = FrontPanel::default();
-    panel.power_on_held(&[Button::Arrow(Pair::Instrument, Dir::Right)]);
+    panel.power_on_held(&mut e, &[Button::Arrow(Pair::Instrument, Dir::Right)]);
     assert_eq!(panel.screen(&mut e, 0).name, "Init GS, Sure?");
     e.set_master_reverb(10);
     assert_eq!(panel.button(&mut e, Button::All), None);
     assert_eq!(e.master_reverb(), 64, "the GS basic setting returns");
 
     let mut panel = FrontPanel::default();
-    panel.power_on_held(&[Button::Both(Pair::Instrument)]);
+    panel.power_on_held(&mut e, &[Button::Both(Pair::Instrument)]);
     let prompt = panel.screen(&mut e, 0);
     assert_eq!(prompt.name, "Init All, Sure?");
     assert!(prompt.all_led && prompt.mute_led, "the lamps flash on");
@@ -400,7 +403,7 @@ fn the_font_prompt_declines_quietly() {
         return;
     };
     let mut panel = FrontPanel::default();
-    panel.power_on_held(&[Button::Arrow(Pair::Instrument, Dir::Right)]);
+    panel.power_on_held(&mut e, &[Button::Arrow(Pair::Instrument, Dir::Right)]);
     panel.screen(&mut e, 0);
     assert_eq!(panel.button(&mut e, Button::Mute), None);
     assert_eq!(panel.screen(&mut e, 100).part, "01");
@@ -549,7 +552,7 @@ fn demo_mode_is_a_tiny_midi_player() {
         return;
     };
     let mut panel = FrontPanel::default();
-    panel.power_on_held(&[Button::Both(Pair::Part)]);
+    panel.power_on_held(&mut e, &[Button::Both(Pair::Part)]);
     let armed = panel.screen(&mut e, 0);
     assert_eq!(armed.part, "S-1");
     assert_eq!(armed.name, "Railgun Rain");
@@ -694,17 +697,25 @@ fn the_part_menu_edits_the_mkii_list() {
     panel.button(&mut e, Button::Both(Pair::Part));
     let screen = panel.screen(&mut e, 4_000);
     assert_eq!(
-        screen.name, ">Part Mode: Norm",
-        "the menu opens on Part Mode"
+        screen.name, ">Bend Range: +2",
+        "the menu opens on the first walked item"
     );
     assert_eq!(screen.part, "01");
-    // Part Mode flips the part to a drum musician on the font's kits.
+    // Part Mode stands apart, behind ALL and MUTE together; it flips
+    // the part to a drum musician on the font's kits.
+    panel.button(&mut e, Button::Monitor);
+    assert_eq!(panel.screen(&mut e, 4_000).name, ">Part Mode: Norm");
     panel.button(&mut e, Button::Arrow(Pair::Instrument, Dir::Right));
     assert!(e.part_drums(0), "part one turns drum");
     assert_eq!(panel.screen(&mut e, 4_000).name, ">Part Mode: Drum");
     panel.button(&mut e, Button::Arrow(Pair::Instrument, Dir::Left));
     assert!(!e.part_drums(0), "and back to normal");
-    // Bend Range steps in semitones from the GS +2.
+    // ALL steps from Part Mode into the walked list; MUTE from the
+    // list's head wraps to its tail.
+    panel.button(&mut e, Button::All);
+    assert_eq!(panel.screen(&mut e, 4_000).name, ">Bend Range: +2");
+    panel.button(&mut e, Button::Mute);
+    assert_eq!(panel.screen(&mut e, 4_000).name, ">Soft Pedal: Off");
     panel.button(&mut e, Button::All);
     assert_eq!(panel.screen(&mut e, 4_000).name, ">Bend Range: +2");
     panel.button(&mut e, Button::Arrow(Pair::Instrument, Dir::Right));
@@ -841,7 +852,7 @@ fn the_monitor_blinks_and_the_demo_leaves() {
     assert!(!panel.screen(&mut e, 4_000).mute_blink);
 
     let mut panel = FrontPanel::default();
-    panel.power_on_held(&[Button::Both(Pair::Part)]);
+    panel.power_on_held(&mut e, &[Button::Both(Pair::Part)]);
     assert_eq!(panel.screen(&mut e, 0).part, "S-1", "the demo greets");
     panel.button(&mut e, Button::Monitor);
     assert_eq!(
@@ -849,4 +860,33 @@ fn the_monitor_blinks_and_the_demo_leaves() {
         "01",
         "ALL and MUTE together leave for home"
     );
+}
+
+/// Demo mode is a GS visit: the unit formats itself to the basic
+/// setting on the way in and again on the way out, and MIDI IN stays
+/// shut for the whole stay -- even between songs.
+#[test]
+fn demo_mode_is_a_gs_visit_with_the_door_shut() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    e.set_part_drums(2, true);
+    e.set_master_reverb(10);
+    let mut panel = FrontPanel::default();
+    panel.power_on_held(&mut e, &[Button::Both(Pair::Part)]);
+    assert!(!e.part_drums(2), "arriving formats to the GS basic setting");
+    assert_eq!(e.master_reverb(), 64);
+    // MIDI IN is shut, playing or not.
+    e.write_byte(0x90);
+    e.write_byte(60);
+    e.write_byte(100);
+    assert_eq!(e.voices().0, 0, "the wire is ignored between songs");
+    // Meddle, then leave: the exit formats again and the door opens.
+    e.set_master_reverb(20);
+    panel.button(&mut e, Button::Monitor);
+    assert_eq!(e.master_reverb(), 64, "leaving formats to GS again");
+    e.write_byte(0x90);
+    e.write_byte(60);
+    e.write_byte(100);
+    assert!(e.voices().0 > 0, "and the wire plays again");
 }

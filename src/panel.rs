@@ -496,13 +496,17 @@ impl Default for FrontPanel {
 impl FrontPanel {
     /// The buttons held while the power came on, read the way the unit
     /// reads its own fascia at start-up.
-    pub fn power_on_held(&mut self, held: &[Button]) {
+    pub fn power_on_held(&mut self, engine: &mut Engine, held: &[Button]) {
         let is =
             |want: &[Button]| held.len() == want.len() && want.iter().all(|b| held.contains(b));
         if is(&[Button::Both(Pair::Part)]) {
             // Both PART halves: demo mode, armed on song one and
             // waiting for ALL, MUTE lamp lit, exactly as the unit
-            // arrives in it.
+            // arrives in it. The demo songs are GS songs: the unit
+            // formats itself to the basic setting on the way in, and
+            // MIDI IN stays shut for the whole visit.
+            engine.gs_reset();
+            engine.set_wire_closed(true);
             self.mode = Mode::Demo {
                 song: 0,
                 playing: false,
@@ -629,15 +633,22 @@ impl FrontPanel {
             return None;
         }
         if let Mode::PartMenu { item } = self.mode {
+            // ALL and MUTE walk the ordinary items; Part Mode stands
+            // apart at slot zero, reached only by ALL and MUTE pressed
+            // together -- the manual's own arrangement.
+            let walked = PART_MENU.len() - 1;
             match b {
+                Button::Monitor => {
+                    self.mode = Mode::PartMenu { item: 0 };
+                }
                 Button::All => {
                     self.mode = Mode::PartMenu {
-                        item: (item + 1) % PART_MENU.len(),
+                        item: if item >= walked { 1 } else { item + 1 },
                     };
                 }
                 Button::Mute => {
                     self.mode = Mode::PartMenu {
-                        item: (item + PART_MENU.len() - 1) % PART_MENU.len(),
+                        item: if item <= 1 { walked } else { item - 1 },
                     };
                 }
                 Button::Arrow(Pair::Instrument, dir) => {
@@ -701,6 +712,10 @@ impl FrontPanel {
             match b {
                 Button::Monitor => {
                     engine.demo_stop();
+                    // Leaving is the mirror of arriving: the GS basic
+                    // setting again, and MIDI IN opens back up.
+                    engine.gs_reset();
+                    engine.set_wire_closed(false);
                     self.mode = Mode::Home;
                     self.demo_ended = None;
                     return None;
@@ -768,7 +783,10 @@ impl FrontPanel {
                 self.mode = if self.all {
                     Mode::SystemMenu { item: 0 }
                 } else {
-                    Mode::PartMenu { item: 0 }
+                    // The part menu opens on its first walked item;
+                    // Part Mode sits apart, behind ALL and MUTE
+                    // together.
+                    Mode::PartMenu { item: 1 }
                 };
             }
             // The INSTRUMENT pair opens variation select on a part.
