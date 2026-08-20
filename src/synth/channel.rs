@@ -636,10 +636,12 @@ impl Channel {
     }
 
     pub(crate) fn get_reverb_send(&self) -> f32 {
-        // The send eases in and tops out shy of drenched: tuned twice
-        // by ear, so the shipping default of 40 sits low and even full
-        // send keeps the band in the room rather than the cistern.
-        0.742 * ((1_f32 / 127_f32) * self.reverb_send as f32).powf(1.302)
+        // The send eases in and tops out shy of drenched: tuned by ear
+        // over several passes, the curve steepening each time so the
+        // shipping default of 40 sits further back while full send
+        // stays where it was. A room should sit behind the band, not
+        // swallow it.
+        0.742 * ((1_f32 / 127_f32) * self.reverb_send as f32).powf(1.832)
     }
 
     pub(crate) fn get_chorus_send(&self) -> f32 {

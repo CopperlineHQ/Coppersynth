@@ -580,8 +580,10 @@ impl Synthesizer {
             }
 
             reverb.process(reverb_input, reverb_output_left, reverb_output_right);
-            let reverb_gain =
-                self.master_volume * self.master_reverb_gain * Synthesizer::REVERB_RETURN;
+            let reverb_gain = self.master_volume
+                * self.master_reverb_gain
+                * Synthesizer::REVERB_RETURN
+                * reverb.get_output_gain();
             ArrayMath::multiply_add(reverb_gain, reverb_output_left, &mut self.block_left[..]);
             ArrayMath::multiply_add(reverb_gain, reverb_output_right, &mut self.block_right[..]);
         }
