@@ -880,3 +880,76 @@ fn key_range_gates_and_the_curve_shapes() {
     send(&mut e, &[0x90, 60, 100]);
     assert!(e.voices().0 > 0, "inside the window, the note sounds");
 }
+
+/// The reverb characters genuinely differ: a small dampened room dies
+/// away sooner than the big hall, and the Delay characters produce a
+/// discrete repeat -- panned down the middle for Delay, and walking
+/// the stage for Panning Delay.
+#[test]
+fn the_reverb_characters_have_characters() {
+    // A staccato hit, then silence: the tail is the room's own.
+    let tail = |reverb_type: u8| -> Vec<(f32, f32)> {
+        let Some(mut e) = engine(Mt32Mode::Off) else {
+            return Vec::new();
+        };
+        e.set_reverb_type(reverb_type);
+        e.set_part_reverb(0, 127);
+        send(&mut e, &[0xC0, 115, 0x90, 72, 127]);
+        let mut hit = vec![(0.0f32, 0.0f32); 4_410];
+        e.render(&mut hit);
+        send(&mut e, &[0x80, 72, 0]);
+        let mut out = vec![(0.0f32, 0.0f32); 66_150];
+        e.render(&mut out);
+        out
+    };
+    let room2 = tail(1);
+    if room2.is_empty() {
+        return;
+    }
+    let hall2 = tail(4);
+    // The late tail: a second and a half in, the hall still rings
+    // where the small room has gone quiet.
+    let late = |buf: &[(f32, f32)]| rms_of(&buf[52_920..]);
+    assert!(
+        late(&hall2) > late(&room2) * 1.5,
+        "the hall outlasts the small room (hall {}, room {})",
+        late(&hall2),
+        late(&room2)
+    );
+    // The Delay character: the tail's loudest moment sits near the
+    // repeat time, not at the front as a room's would.
+    let echo = tail(6);
+    let window = 2_205;
+    let loudest = (0..echo.len() - window)
+        .step_by(window)
+        .max_by(|&a, &b| {
+            rms_of(&echo[a..a + window])
+                .partial_cmp(&rms_of(&echo[b..b + window]))
+                .unwrap()
+        })
+        .unwrap();
+    // The tail render starts a tenth of a second in, so the repeat of
+    // the hit's onset lands that much earlier in the buffer.
+    let hit = 4_410;
+    let repeat = (0.32f32 * 44_100.0) as usize - hit;
+    assert!(
+        loudest + window > repeat && loudest < repeat + 3 * window,
+        "the repeat stands where the delay put it (loudest at {loudest}, repeat {repeat})"
+    );
+    // Panning Delay: the first repeat leans left, the second right.
+    let pan = tail(7);
+    let lean = |at: usize| {
+        let slice = &pan[at..at + window];
+        let l = (slice.iter().map(|&(x, _)| x * x).sum::<f32>() / window as f32).sqrt();
+        let r = (slice.iter().map(|&(_, x)| x * x).sum::<f32>() / window as f32).sqrt();
+        l - r
+    };
+    let first = (0.28f32 * 44_100.0) as usize - hit;
+    let second = first + (0.28f32 * 44_100.0) as usize;
+    assert!(
+        lean(first) > 0.0 && lean(second) < 0.0,
+        "the repeats walk the stage (first {}, second {})",
+        lean(first),
+        lean(second)
+    );
+}

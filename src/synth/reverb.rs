@@ -11,6 +11,9 @@ pub(crate) struct Reverb {
     apfs_r: Vec<AllPassFilter>,
 
     gain: f32,
+    /// The Delay and Panning Delay characters run this feedback echo
+    /// instead of the room machinery.
+    echo: Option<Echo>,
     room_size: f32,
     room_size1: f32,
     damp: f32,
@@ -109,6 +112,7 @@ impl Reverb {
             apfs_l,
             apfs_r,
             gain: 0_f32,
+            echo: None,
             room_size: 0_f32,
             room_size1: 0_f32,
             damp: 0_f32,
@@ -127,7 +131,40 @@ impl Reverb {
         reverb
     }
 
+    /// A reverb wearing one of the unit's eight characters. Types 0-5
+    /// re-tune the rooms -- size and damping spread from the smallest
+    /// room to the big hall, the plate bright and dense -- with Hall 2
+    /// exactly the sound the unit has always woken to. Types 6 and 7
+    /// put the echo in the rack instead: a plain repeat, and the one
+    /// whose repeats cross the stereo stage.
+    pub(crate) fn of_type(sample_rate: i32, reverb_type: u8) -> Self {
+        let mut reverb = Reverb::new(sample_rate);
+        let (room, damp, width) = match reverb_type {
+            0 => (0.30, 0.55, 1.0),
+            1 => (0.22, 0.65, 1.0),
+            2 => (0.38, 0.50, 1.0),
+            3 => (0.46, 0.45, 1.0),
+            5 => (0.55, 0.08, 0.7),
+            6 => {
+                reverb.echo = Some(Echo::new(sample_rate, 0.32, 0.40, false));
+                return reverb;
+            }
+            7 => {
+                reverb.echo = Some(Echo::new(sample_rate, 0.28, 0.45, true));
+                return reverb;
+            }
+            _ => (Reverb::INITIAL_ROOM, Reverb::INITIAL_DAMP, 1.0),
+        };
+        reverb.set_room_size(room);
+        reverb.set_damp(damp);
+        reverb.set_width(width);
+        reverb
+    }
+
     pub fn mute(&mut self) {
+        if let Some(echo) = self.echo.as_mut() {
+            echo.mute();
+        }
         for cf in self.cfs_l.iter_mut() {
             cf.mute();
         }
@@ -155,6 +192,10 @@ impl Reverb {
         output_left: &mut [f32],
         output_right: &mut [f32],
     ) {
+        if let Some(echo) = self.echo.as_mut() {
+            echo.process(input, output_left, output_right);
+            return;
+        }
         let input_length = input.len();
         let output_left_length = output_left.len();
         let output_right_length = output_right.len();
@@ -199,7 +240,11 @@ impl Reverb {
 
         self.room_size1 = self.room_size;
         self.damp1 = self.damp;
-        self.gain = Reverb::FIXED_GAIN;
+        self.gain = if self.echo.is_some() {
+            Echo::INPUT_GAIN
+        } else {
+            Reverb::FIXED_GAIN
+        };
 
         for cf in self.cfs_l.iter_mut() {
             cf.set_feedback(self.room_size1);
@@ -234,6 +279,65 @@ impl Reverb {
     fn set_width(&mut self, value: f32) {
         self.width = value;
         self.update();
+    }
+}
+
+/// The Delay characters: a feedback delay line, repeats straight down
+/// the middle or crossing the stereo stage.
+#[derive(Debug)]
+struct Echo {
+    buffer_l: Vec<f32>,
+    buffer_r: Vec<f32>,
+    index: usize,
+    feedback: f32,
+    /// Panning Delay: each repeat feeds back into the other side, so
+    /// the echoes walk left, right, left.
+    crossed: bool,
+}
+
+impl Echo {
+    /// The feed into the line, sized so a full send's first repeat
+    /// stands about half as tall as the note that made it (the return
+    /// multiplies by the rack's own 4.0).
+    const INPUT_GAIN: f32 = 0.125;
+
+    fn new(sample_rate: i32, seconds: f32, feedback: f32, crossed: bool) -> Self {
+        let len = ((sample_rate as f32 * seconds) as usize).max(1);
+        Self {
+            buffer_l: vec![0.0; len],
+            buffer_r: vec![0.0; len],
+            index: 0,
+            feedback,
+            crossed,
+        }
+    }
+
+    fn process(&mut self, input: &[f32], output_left: &mut [f32], output_right: &mut [f32]) {
+        let len = self.buffer_l.len();
+        for t in 0..input.len() {
+            let l = self.buffer_l[self.index];
+            let r = self.buffer_r[self.index];
+            output_left[t] = l;
+            output_right[t] = r;
+            if self.crossed {
+                // The dry feed starts on the left; every repeat swaps
+                // sides on its way back in.
+                self.buffer_l[self.index] = input[t] + self.feedback * r;
+                self.buffer_r[self.index] = self.feedback * l;
+            } else {
+                self.buffer_l[self.index] = input[t] + self.feedback * l;
+                self.buffer_r[self.index] = input[t] + self.feedback * r;
+            }
+            self.index += 1;
+            if self.index == len {
+                self.index = 0;
+            }
+        }
+    }
+
+    fn mute(&mut self) {
+        self.buffer_l.fill(0.0);
+        self.buffer_r.fill(0.0);
     }
 }
 

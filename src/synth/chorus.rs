@@ -91,8 +91,9 @@ impl ChorusType {
             Self::Chorus1 => (112.0, 12.0, 3.0, 0),
             // Chorus 2: quick and wide.
             Self::Chorus2 => (80.0, 34.0, 9.0, 8),
-            // Chorus 3: the wake-up default, slower and warm.
-            Self::Chorus3 => (80.0, 30.0, 3.0, 12),
+            // Chorus 3: the wake-up default -- slow, but swept wide,
+            // a real shimmer at full send rather than a polite one.
+            Self::Chorus3 => (80.0, 48.0, 3.0, 16),
             // Chorus 4: the tight one -- shorter pre-delay, a Chorus 2
             // pace with a touch of feedback, off the macro's own
             // proportions.

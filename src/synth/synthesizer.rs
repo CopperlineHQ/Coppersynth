@@ -44,9 +44,7 @@ pub struct Synthesizer {
     master_reverb_gain: f32,
     master_chorus_gain: f32,
     chorus_type: ChorusType,
-    /// The reverb character 0-7 (Room1..Panning Delay). The menu and
-    /// the state remember it; the DSP plays one room for now, and
-    /// grows its characters later.
+    /// The reverb character 0-7, Room 1 to Panning Delay.
     reverb_type: u8,
 
     effects: Option<Effects>,
@@ -757,8 +755,17 @@ impl Synthesizer {
         self.reverb_type
     }
 
+    /// Swap the reverb for another character. The rack is rebuilt
+    /// silent, exactly as the chorus's macro switch is.
     pub fn set_reverb_type(&mut self, reverb_type: u8) {
-        self.reverb_type = reverb_type.min(7);
+        let reverb_type = reverb_type.min(7);
+        if reverb_type == self.reverb_type {
+            return;
+        }
+        self.reverb_type = reverb_type;
+        if let Some(effects) = self.effects.as_mut() {
+            effects.reverb = Reverb::of_type(self.sample_rate, reverb_type);
+        }
     }
 
     /// The unit's master tune, applied to every channel in one go.
@@ -876,7 +883,7 @@ struct Effects {
 impl Effects {
     fn new(settings: &SynthesizerSettings) -> Effects {
         Self {
-            reverb: Reverb::new(settings.sample_rate),
+            reverb: Reverb::of_type(settings.sample_rate, 4),
             reverb_input: vec![0_f32; settings.block_size],
             reverb_output_left: vec![0_f32; settings.block_size],
             reverb_output_right: vec![0_f32; settings.block_size],
