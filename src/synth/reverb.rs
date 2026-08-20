@@ -14,6 +14,10 @@ pub(crate) struct Reverb {
     /// The Delay and Panning Delay characters run this feedback echo
     /// instead of the room machinery.
     echo: Option<Echo>,
+    /// What this character returns to the mix. A long room gathers
+    /// more energy than a short one at the same send, so the halls
+    /// stand back to sit level with the smaller rooms.
+    output_gain: f32,
     room_size: f32,
     room_size1: f32,
     damp: f32,
@@ -113,6 +117,7 @@ impl Reverb {
             apfs_r,
             gain: 0_f32,
             echo: None,
+            output_gain: 1.0_f32,
             room_size: 0_f32,
             room_size1: 0_f32,
             damp: 0_f32,
@@ -140,6 +145,15 @@ impl Reverb {
     /// stereo stage.
     pub(crate) fn of_type(sample_rate: i32, reverb_type: u8) -> Self {
         let mut reverb = Reverb::new(sample_rate);
+        // The halls gather far more energy in their long tails than
+        // the small rooms do; standing them back keeps the staircase
+        // of lengths without the cathedral drowning the band.
+        reverb.output_gain = match reverb_type {
+            3 => 0.72,
+            4 => 0.60,
+            5 => 0.85,
+            _ => 1.0,
+        };
         let (room, damp, width) = match reverb_type {
             0 => (0.16, 0.60, 1.35),
             1 => (0.30, 0.52, 1.35),
@@ -266,6 +280,11 @@ impl Reverb {
 
     pub fn get_input_gain(&self) -> f32 {
         self.gain
+    }
+
+    /// What this character returns to the mix.
+    pub(crate) fn get_output_gain(&self) -> f32 {
+        self.output_gain
     }
 
     fn set_room_size(&mut self, value: f32) {
