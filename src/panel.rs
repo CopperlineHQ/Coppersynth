@@ -1433,13 +1433,12 @@ fn style_column(display: u8, rows: u32, baseline: bool, peak: Option<u32>) -> u1
                 column |= 1 << p.min(top);
             }
         }
-        // A single segment at the level.
+        // A single segment at the level -- one block, rising and
+        // falling alone; a separate peak dot would read as a second
+        // note.
         1 => {
             if rows > 0 || baseline {
                 column |= 1 << rows.min(top);
-            }
-            if let Some(p) = peak {
-                column |= 1 << p.min(top);
             }
         }
         // Bars hung from the ceiling.
@@ -1456,13 +1455,10 @@ fn style_column(display: u8, rows: u32, baseline: bool, peak: Option<u32>) -> u1
                 column |= 1 << flip(p);
             }
         }
-        // A single segment hung from the ceiling.
+        // A single segment hung from the ceiling, likewise alone.
         _ => {
             if rows > 0 || baseline {
                 column |= 1 << flip(rows);
-            }
-            if let Some(p) = peak {
-                column |= 1 << flip(p);
             }
         }
     }

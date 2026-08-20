@@ -131,20 +131,21 @@ impl Reverb {
         reverb
     }
 
-    /// A reverb wearing one of the unit's eight characters. Types 0-5
-    /// re-tune the rooms -- size and damping spread from the smallest
-    /// room to the big hall, the plate bright and dense -- with Hall 2
-    /// exactly the sound the unit has always woken to. Types 6 and 7
-    /// put the echo in the rack instead: a plain repeat, and the one
-    /// whose repeats cross the stereo stage.
+    /// A reverb wearing one of the unit's eight characters. Types 0-4
+    /// climb a single staircase of rooms: Room 1 a tiny booth, each
+    /// step larger and longer, Hall 2 the cathedral at the top. The
+    /// plate rings hall-long but bright -- barely dampened, the way a
+    /// sheet of steel is. Types 6 and 7 put the echo in the rack
+    /// instead: a plain repeat, and the one whose repeats cross the
+    /// stereo stage.
     pub(crate) fn of_type(sample_rate: i32, reverb_type: u8) -> Self {
         let mut reverb = Reverb::new(sample_rate);
         let (room, damp, width) = match reverb_type {
-            0 => (0.30, 0.55, 1.35),
-            1 => (0.22, 0.65, 1.35),
-            2 => (0.38, 0.50, 1.35),
-            3 => (0.46, 0.45, 1.35),
-            5 => (0.55, 0.08, 0.7),
+            0 => (0.16, 0.60, 1.35),
+            1 => (0.30, 0.52, 1.35),
+            2 => (0.46, 0.45, 1.35),
+            3 => (0.65, 0.32, 1.35),
+            5 => (0.72, 0.03, 0.7),
             6 => {
                 reverb.echo = Some(Echo::new(sample_rate, 0.32, 0.40, false));
                 // The gain follows the rack fitted; without this the
@@ -157,7 +158,7 @@ impl Reverb {
                 reverb.update();
                 return reverb;
             }
-            _ => (Reverb::INITIAL_ROOM, Reverb::INITIAL_DAMP, 1.35),
+            _ => (0.80, 0.25, 1.35),
         };
         reverb.set_room_size(room);
         reverb.set_damp(damp);
