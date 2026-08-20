@@ -890,3 +890,32 @@ fn demo_mode_is_a_gs_visit_with_the_door_shut() {
     e.write_byte(100);
     assert!(e.voices().0 > 0, "and the wire plays again");
 }
+
+/// The power-on show: the sparkle condenses into CS, the badge takes
+/// the frame, and the matrix comes to rest on the baseline -- all on
+/// the boot clock, with the meters kept out until it is done.
+#[test]
+fn the_power_on_show_spells_the_initials() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    let mut panel = FrontPanel::default();
+    let _ = panel.screen(&mut e, 0);
+    // Mid-condense: some dots stand, the letters not yet whole.
+    let sparkle = panel.screen(&mut e, 400).bars;
+    assert!(sparkle.iter().any(|&c| c != 0), "the sparkle has begun");
+    // The letters stand whole.
+    let cs = panel.screen(&mut e, 1_200).bars;
+    assert_eq!(cs[2], 0x1FF8, "the C's spine");
+    assert_eq!(cs[13], 0x38FC, "the S's curl");
+    assert_eq!(cs[7], 0, "and clear air between the letters");
+    // The badge holds the frame.
+    let badge = panel.screen(&mut e, 2_700).bars;
+    assert_eq!(badge[3], 0xFFFF, "a pillar stands");
+    assert_eq!(badge[8], 0xC003, "the borders run top and bottom");
+    // And the matrix comes to rest, ready for the meters.
+    let rest = panel.screen(&mut e, 3_849).bars;
+    assert!(rest.iter().all(|&c| c == 1), "the baseline alone");
+    let after = panel.screen(&mut e, 4_000).bars;
+    assert!(after.iter().all(|&c| c & 1 != 0), "the meters take over");
+}

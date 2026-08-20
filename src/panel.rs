@@ -469,6 +469,98 @@ const DEMO_GAP_MS: u64 = 3000;
 pub const NAME_COLS: usize = 20;
 /// The bar matrix: sixteen columns of sixteen dots.
 pub const BAR_ROWS: u32 = 16;
+/// The power-on show, played on the matrix from the moment the unit
+/// wakes and never interrupted by the meters: a sparkle condenses
+/// into the letters, they pulse, burst, give way to the framed badge,
+/// and dissolve to the resting baseline -- the hardware's own boot
+/// choreography, wearing this unit's initials.
+const BOOT_SHOW_MS: u64 = 3_850;
+/// The letters CS as column masks, twelve rows tall, C left, S right.
+const BOOT_CS: [u16; PARTS] = [
+    0x0000, 0x0000, 0x1FF8, 0x300C, 0x300C, 0x300C, 0x3C3C, 0x0000, 0x0000, 0x1F18, 0x318C, 0x318C,
+    0x318C, 0x38FC, 0x0000, 0x0000,
+];
+/// The same letters squeezed to their spines, for the pulse.
+const BOOT_CS_NARROW: [u16; PARTS] = [
+    0x0000, 0x0000, 0x0000, 0x1FF8, 0x300C, 0x3C3C, 0x0000, 0x0000, 0x0000, 0x0000, 0x1F18, 0x318C,
+    0x38FC, 0x0000, 0x0000, 0x0000,
+];
+/// The badge: double borders top and bottom, two pillars standing in
+/// the frame.
+const BOOT_BADGE: [u16; PARTS] = [
+    0x0000, 0xC003, 0xC003, 0xFFFF, 0xFFFF, 0xFFFF, 0xC003, 0xC003, 0xC003, 0xC003, 0xFFFF, 0xFFFF,
+    0xFFFF, 0xC003, 0xC003, 0x0000,
+];
+
+/// A deterministic scatter: whether dot (`c`, `r`) sparkles under
+/// `salt`, one dot in `density`.
+fn boot_scatter(c: usize, r: u32, salt: u64, density: u64) -> bool {
+    let mut x = ((c as u64) << 32) ^ ((r as u64) << 8) ^ salt.wrapping_mul(0x9E3779B97F4A7C15);
+    x ^= x >> 33;
+    x = x.wrapping_mul(0xFF51AFD7ED558CCD);
+    x ^= x >> 33;
+    x.is_multiple_of(density)
+}
+
+/// Each dot's own moment within a phase, spread deterministically.
+fn boot_moment(c: usize, r: u32, from: u64, span: u64) -> u64 {
+    let mut x = ((c as u64) << 16) ^ (r as u64).wrapping_mul(0x2545F4914F6CDD1D);
+    x ^= x >> 29;
+    x = x.wrapping_mul(0xBF58476D1CE4E5B9);
+    x ^= x >> 32;
+    from + x % span
+}
+
+/// The show's frame for `elapsed` milliseconds since the wake.
+fn boot_show_bars(elapsed: u64) -> [u16; PARTS] {
+    let mut bars = [0u16; PARTS];
+    let e = elapsed;
+    for (c, bar) in bars.iter_mut().enumerate() {
+        for r in 0..BAR_ROWS {
+            let bit = 1u16 << r;
+            let lit = match e {
+                // A breath on the resting baseline.
+                0..=69 => r == 0,
+                // The sparkle condenses into the letters: each of
+                // their dots arrives at its own moment, while stray
+                // dots glitter and thin out.
+                70..=999 => {
+                    let target = BOOT_CS[c] & bit != 0;
+                    if target {
+                        e >= boot_moment(c, r, 150, 800)
+                    } else {
+                        let density = 6 + (e - 70) / 120;
+                        boot_scatter(c, r, e / 70, density)
+                    }
+                }
+                // The letters stand, squeeze to their spines, and
+                // stand again.
+                1_000..=1_599 => BOOT_CS[c] & bit != 0,
+                1_600..=1_749 => BOOT_CS_NARROW[c] & bit != 0,
+                1_750..=1_899 => BOOT_CS[c] & bit != 0,
+                // The burst: the letters' dots scatter and die.
+                1_900..=2_149 => {
+                    let density = 3 + (e - 1_900) / 60;
+                    boot_scatter(c, r, e / 70, density)
+                }
+                // The badge sweeps in from the left and holds.
+                2_150..=3_249 => BOOT_BADGE[c] & bit != 0 && e >= 2_150 + c as u64 * 12,
+                // The dissolve: each badge dot dies at its own moment,
+                // the last glitter thinning behind it.
+                3_250..=3_699 => {
+                    let badge = BOOT_BADGE[c] & bit != 0;
+                    (badge && e < boot_moment(c, r, 3_250, 400)) || boot_scatter(c, r, e / 70, 24)
+                }
+                // And the resting baseline, ready for the meters.
+                _ => r == 0,
+            };
+            if lit {
+                *bar |= bit;
+            }
+        }
+    }
+    bars
+}
 /// How fast a bar falls once the sound under it has, full scale per
 /// millisecond; the peak dot holds, then falls a row at a time.
 const BAR_FALL_PER_MS: f32 = 0.006;
@@ -1262,6 +1354,14 @@ impl FrontPanel {
     /// The matrix: live levels with a fall and a peak dot, a parameter
     /// staircase while a pair view is up, or the picture a game sent.
     fn compose_bars(&mut self, engine: &Engine, now_ms: u64) -> [u16; PARTS] {
+        // The power-on show owns the matrix from the moment the unit
+        // wakes; nothing on the wire interrupts it.
+        if let Some(started) = self.boot_started {
+            let elapsed = now_ms.saturating_sub(started);
+            if elapsed < BOOT_SHOW_MS {
+                return boot_show_bars(elapsed);
+            }
+        }
         // A picture owns the matrix while it is fresh.
         if let Some((columns, started)) = &mut self.picture {
             let held = columns.to_owned();
