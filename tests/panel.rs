@@ -889,6 +889,18 @@ fn demo_mode_is_a_gs_visit_with_the_door_shut() {
     e.write_byte(60);
     e.write_byte(100);
     assert!(e.voices().0 > 0, "and the wire plays again");
+
+    // The power switch is a door out of the demo too: whatever the
+    // songs set is formatted away before the battery ever sees it.
+    let mut panel = FrontPanel::default();
+    panel.power_on_held(&mut e, &[Button::Both(Pair::Part)]);
+    e.set_master_reverb(20);
+    panel.power_off(&mut e);
+    assert_eq!(e.master_reverb(), 64, "power off formats the demo away");
+    e.write_byte(0x90);
+    e.write_byte(62);
+    e.write_byte(100);
+    assert!(e.voices().0 > 0, "and the wire is open for the next boot");
 }
 
 /// The power-on show: the sparkle condenses into CS, the badge takes

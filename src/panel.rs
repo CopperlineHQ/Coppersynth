@@ -656,6 +656,20 @@ impl FrontPanel {
         }
     }
 
+    /// The power on its way out: demo mode does not survive the
+    /// switch. Leaving the demo by any door -- the exit combo or the
+    /// power itself -- returns the unit to the GS basic setting, or
+    /// the demo songs' own housekeeping would go into the battery as
+    /// if it were yours.
+    pub fn power_off(&mut self, engine: &mut Engine) {
+        if matches!(self.mode, Mode::Demo { .. }) {
+            engine.demo_stop();
+            engine.gs_reset();
+            engine.set_wire_closed(false);
+            self.mode = Mode::Home;
+        }
+    }
+
     /// Put the panel into the Initializing... hold, for a host whose
     /// bank swap rebuilds the unit around the new font: the freshly
     /// attached panel shows the hold's second, then the ordinary boot
