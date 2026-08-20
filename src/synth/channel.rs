@@ -636,7 +636,10 @@ impl Channel {
     }
 
     pub(crate) fn get_reverb_send(&self) -> f32 {
-        (1_f32 / 127_f32) * self.reverb_send as f32
+        // The send eases in rather than climbing the straight line:
+        // 40 -- the default so much song data ships -- sits where 30
+        // used to, while full send stays exactly full.
+        ((1_f32 / 127_f32) * self.reverb_send as f32).powf(1.25)
     }
 
     pub(crate) fn get_chorus_send(&self) -> f32 {

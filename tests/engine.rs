@@ -956,8 +956,8 @@ fn the_reverb_characters_have_characters() {
 
 /// The off-line watch: a stream keeping itself alive with active
 /// sensing that then goes silent is a dropped line -- everything
-/// sounding is released and the unit says what the real one says. A
-/// stream that never sensed holds its notes, exactly like hardware.
+/// sounding is released, quietly. A stream that never sensed holds
+/// its notes, exactly like hardware.
 #[test]
 fn active_sensing_going_quiet_releases_everything() {
     let Some(mut e) = engine(Mt32Mode::Off) else {
@@ -977,10 +977,8 @@ fn active_sensing_going_quiet_releases_everything() {
         "the held chord lets go after the line drops"
     );
     assert!(
-        e.take_panel_feed()
-            .iter()
-            .any(|f| matches!(f, coppersynth::panel::Feed::Text(t) if t == "MIDI Off Line!")),
-        "the unit says what the real one says"
+        e.take_panel_feed().is_empty(),
+        "and the glass carries no error for it"
     );
     // An unsensed stream holds its notes -- hardware would too.
     let Some(mut e) = engine(Mt32Mode::Off) else {

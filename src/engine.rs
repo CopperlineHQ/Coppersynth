@@ -904,16 +904,15 @@ impl Engine {
         }
     }
 
-    /// The line went away under a stream that was keeping itself alive:
-    /// everything sounding is released and the unit says what the real
-    /// one says. Also the host's word for a machine reset -- the source
-    /// power-cycling is the line dropping, whether or not it sensed.
+    /// The line went away under a stream that was keeping itself
+    /// alive: everything sounding is released. Also the host's word
+    /// for a machine reset -- the source power-cycling is the line
+    /// dropping, whether or not it sensed. Quietly: the glass carrying
+    /// an error through every ordinary boot would say less, not more.
     pub fn midi_off_line(&mut self) {
         self.sensing = false;
         self.in_sysex = false;
         self.all_notes_off();
-        self.panel_feed
-            .push(Feed::Text("MIDI Off Line!".to_string()));
     }
 
     // --- the masters the panel's ALL mode turns --------------------------
