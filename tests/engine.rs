@@ -953,3 +953,41 @@ fn the_reverb_characters_have_characters() {
         lean(second)
     );
 }
+
+/// The off-line watch: a stream keeping itself alive with active
+/// sensing that then goes silent is a dropped line -- everything
+/// sounding is released and the unit says what the real one says. A
+/// stream that never sensed holds its notes, exactly like hardware.
+#[test]
+fn active_sensing_going_quiet_releases_everything() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    send(&mut e, &[0xFE, 0x90, 60, 100, 0xFE]);
+    assert!(e.voices().0 > 0, "the note sounds");
+    // Nearly half a second of silence on a sensed line: the watch
+    // trips, the voices release, the glass says so.
+    let mut out = vec![(0.0f32, 0.0f32); 44_100];
+    e.render(&mut out);
+    let mut tail = vec![(0.0f32, 0.0f32); 88_200];
+    e.render(&mut tail);
+    assert_eq!(
+        e.voices().0,
+        0,
+        "the held chord lets go after the line drops"
+    );
+    assert!(
+        e.take_panel_feed()
+            .iter()
+            .any(|f| matches!(f, coppersynth::panel::Feed::Text(t) if t == "MIDI Off Line!")),
+        "the unit says what the real one says"
+    );
+    // An unsensed stream holds its notes -- hardware would too.
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    send(&mut e, &[0x90, 60, 100]);
+    let mut out = vec![(0.0f32, 0.0f32); 88_200];
+    e.render(&mut out);
+    assert!(e.voices().0 > 0, "no sensing, no watch, the note holds");
+}

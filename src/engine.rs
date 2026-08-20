@@ -202,6 +202,10 @@ pub struct Engine {
     /// Whether MIDI IN is ignored wholesale -- demo mode closes the
     /// door, as the hardware does, even between songs.
     wire_closed: bool,
+    /// The off-line watch: whether active sensing has been seen, and
+    /// how many frames have rendered since the last byte arrived.
+    sensing: bool,
+    silent_frames: u64,
 }
 
 impl Engine {
@@ -293,6 +297,8 @@ impl Engine {
             master_tune_tenths: 4400,
             in_sysex: false,
             wire_closed: false,
+            sensing: false,
+            silent_frames: 0,
         };
         engine.set_master_volume_cc(127);
         Ok(engine)
@@ -313,6 +319,13 @@ impl Engine {
         // A unit in its demo mode ignores MIDI IN, as the hardware
         // does -- between songs as much as during one.
         if self.wire_closed || self.demo.is_some() {
+            return;
+        }
+        self.silent_frames = 0;
+        // Active sensing arms the off-line watch and carries nothing
+        // else; being real-time, it never enters the framing below.
+        if byte == 0xFE {
+            self.sensing = true;
             return;
         }
         // The Rx SysEx switch: off, exclusives fall on the floor whole,
@@ -447,6 +460,17 @@ impl Engine {
         // The synthesizer wants split channels; the scratch pair grows
         // to the largest block asked for and is never given back.
         let n = frames.len();
+        // The off-line watch: a stream that kept itself alive with
+        // active sensing and then stopped means the line is gone --
+        // the player force-quit, the cable pulled -- and the unit
+        // releases everything rather than holding the last chord
+        // forever. 420 ms, as the standard prescribes.
+        if self.sensing {
+            self.silent_frames += n as u64;
+            if self.silent_frames > self.sample_rate as u64 * 42 / 100 {
+                self.midi_off_line();
+            }
+        }
         self.pump_demo(n);
         self.scratch_left.resize(n, 0.0);
         self.scratch_right.resize(n, 0.0);
@@ -878,6 +902,18 @@ impl Engine {
         for sounded in &mut self.parts.sounded {
             *sounded = [SILENT; 128];
         }
+    }
+
+    /// The line went away under a stream that was keeping itself alive:
+    /// everything sounding is released and the unit says what the real
+    /// one says. Also the host's word for a machine reset -- the source
+    /// power-cycling is the line dropping, whether or not it sensed.
+    pub fn midi_off_line(&mut self) {
+        self.sensing = false;
+        self.in_sysex = false;
+        self.all_notes_off();
+        self.panel_feed
+            .push(Feed::Text("MIDI Off Line!".to_string()));
     }
 
     // --- the masters the panel's ALL mode turns --------------------------
