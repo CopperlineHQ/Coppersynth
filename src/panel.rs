@@ -44,9 +44,6 @@ pub enum Button {
     Both(Pair),
     /// ALL and MUTE together: monitor.
     Monitor,
-    /// An arrow pressed with MUTE latched down: the service edits
-    /// (MIDI CH pair: device ID; CHORUS pair: chorus type).
-    MuteArrow(Pair, Dir),
 }
 
 /// Text or a picture the engine took off the wire for the display.
@@ -84,6 +81,9 @@ pub struct Screen {
     pub bars: [u16; PARTS],
     pub all_led: bool,
     pub mute_led: bool,
+    /// Whether the MUTE lamp should blink -- the monitor's sign; it
+    /// overrides the steady lamp while it stands.
+    pub mute_blink: bool,
     /// Whether MT-32 translation is on, for a badge if the host wears
     /// one.
     pub translating: bool,
@@ -108,86 +108,321 @@ enum Mode {
     View(Pair),
     /// "Init MT-32, Sure?" -- ALL turns it on, MUTE turns it off.
     ConfirmMt32,
-    /// "Init SoundFont,Sure?" -- ALL puts the built-in bank back,
-    /// MUTE carries on with the one loaded.
-    ConfirmFont,
+    /// "Init GS, Sure?" -- ALL returns the unit to the GS basic
+    /// setting (system functions kept), MUTE carries on.
+    ConfirmGs,
+    /// "Init All, Sure?" -- ALL is the factory preset: the host puts
+    /// the built-in bank back and every setting returns home. MUTE
+    /// carries on.
+    ConfirmAll,
     /// The second after a factory reset was confirmed: the host is
     /// putting the built-in bank back, and every button waits.
     Initializing,
     /// The undocumented screen: the credits roll until ALL or MUTE
     /// lets the boot carry on.
     Credits,
-    /// "Device ID: <n>" -- the MIDI CH arrows cycle 1-32, ALL commits,
-    /// MUTE cancels. Reached with MUTE latched and a MIDI CH arrow.
-    EditDeviceId {
-        pending: u8,
+    /// The system menu (ALL lit, PART pair): ALL and MUTE walk the
+    /// items, the INSTRUMENT arrows set the value live, the PART pair
+    /// leaves.
+    SystemMenu {
+        item: usize,
     },
-    /// "Chorus Type: <n>" -- the CHORUS arrows cycle 0-8 and each
-    /// selection sounds at once for auditioning; ALL keeps it, MUTE
-    /// puts the original back. Reached with MUTE latched and a CHORUS
-    /// arrow.
-    EditChorusType {
-        pending: u8,
-        original: u8,
+    /// The part menu (ALL dark, PART pair): as the system menu, and
+    /// the PART arrows move between parts with the item held.
+    PartMenu {
+        item: usize,
     },
-    /// The part-parameter editor: INSTRUMENT arrows browse the
-    /// settings, LEVEL arrows set 0-127 (sounding at once), PART
-    /// arrows move between parts. ALL keeps everything, MUTE puts the
-    /// whole snapshot back.
-    EditPartParams {
-        param: usize,
-        all: bool,
-    },
+    /// Variation select (INSTRUMENT pair on a part): the INSTRUMENT
+    /// arrows walk the banks the font offers for the part's
+    /// instrument; the pair again leaves.
+    VariationEdit,
     /// The unit playing to itself: ALL plays, MUTE stops, PART picks
-    /// the song. Reached with both PART halves held through power-on.
+    /// the song, ALL and MUTE together leave. Reached with both PART
+    /// halves held through power-on.
     Demo {
         song: usize,
         playing: bool,
     },
 }
 
-/// The per-part parameters the fascia has no pair for -- the CC and
-/// GS-NRPN settings a game would drive over the wire -- browsable in
-/// the part-parameter editor (MUTE latched under an INSTRUMENT
-/// arrow). Every value is the wire's own 0-127; the relative tone
-/// modifies sit at 64 when neutral.
-const PART_PARAMS: [(&str, PartParam); 12] = [
-    ("Portamento Time", PartParam::Cc(0x05)),
-    ("Portamento", PartParam::Cc(0x41)),
-    ("Sostenuto", PartParam::Cc(0x42)),
-    ("Soft Pedal", PartParam::Cc(0x43)),
-    ("Vibrato Rate", PartParam::Nrpn(0x01, 0x08)),
-    ("Vibrato Depth", PartParam::Nrpn(0x01, 0x09)),
-    ("Vibrato Delay", PartParam::Nrpn(0x01, 0x0A)),
-    ("Cutoff", PartParam::Nrpn(0x01, 0x20)),
-    ("Resonance", PartParam::Nrpn(0x01, 0x21)),
-    ("EG Attack", PartParam::Nrpn(0x01, 0x63)),
-    ("EG Decay", PartParam::Nrpn(0x01, 0x64)),
-    ("EG Release", PartParam::Nrpn(0x01, 0x66)),
+/// The part menu: the mkII's own list, order and spelling, checked
+/// against a real unit -- Part Mode is simply the first setting --
+/// with the wire-only pedals appended as this unit's extras.
+const PART_MENU: [(&str, PartItem); 26] = [
+    ("Part Mode", PartItem::Mode),
+    ("M/P Mode", PartItem::MonoPoly),
+    ("Voice Rsv", PartItem::VoiceReserve),
+    ("Fine Tune", PartItem::FineTune),
+    ("Rx Bank Sel", PartItem::RxBank),
+    ("Rx NRPN", PartItem::RxNrpn),
+    ("Bend Range", PartItem::BendRange),
+    ("Mod. Depth", PartItem::ModDepth),
+    ("K. Range L", PartItem::KeyRangeL),
+    ("K. Range H", PartItem::KeyRangeH),
+    ("Velo Depth", PartItem::VeloDepth),
+    ("Velo Offset", PartItem::VeloOffset),
+    ("Vib. Rate", PartItem::Offset(0x08)),
+    ("Vib. Depth", PartItem::Offset(0x09)),
+    ("Vib. Delay", PartItem::Offset(0x0A)),
+    ("Cutoff Freq", PartItem::Offset(0x20)),
+    ("Resonance", PartItem::Offset(0x21)),
+    ("Attack Tm.", PartItem::Offset(0x63)),
+    ("Decay Tm.", PartItem::Offset(0x64)),
+    ("Release Tm.", PartItem::Offset(0x66)),
+    ("Modulation", PartItem::Cc(0x01)),
+    ("Expression", PartItem::Cc(0x0B)),
+    ("Portamento", PartItem::Switch(0x41)),
+    ("Porta. Tm.", PartItem::Cc(0x05)),
+    ("Sostenuto", PartItem::Switch(0x42)),
+    ("Soft Pedal", PartItem::Switch(0x43)),
 ];
 
-/// How a part parameter reaches the engine: a plain controller, or a
-/// GS NRPN by its select pair.
+/// How a part-menu value reads, steps and prints.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PartParam {
+enum PartItem {
+    /// Norm or Drum: which kind of musician the part is.
+    Mode,
+    /// Poly or Mono.
+    MonoPoly,
+    /// Voice Reserve, kept as the unit keeps it.
+    VoiceReserve,
+    /// Fine Tune, -12..=+12 across the RPN's semitone each way.
+    FineTune,
+    /// The part's reception switches.
+    RxBank,
+    RxNrpn,
+    /// RPN 0 in semitones, -24..=+24.
+    BendRange,
+    /// How far the mod wheel reaches, GS factory 10.
+    ModDepth,
+    /// The playable window's ends, shown as note names.
+    KeyRangeL,
+    KeyRangeH,
+    /// The velocity curve, 64/64 neutral.
+    VeloDepth,
+    VeloOffset,
+    /// A plain controller, 0-127.
     Cc(u8),
-    Nrpn(u8, u8),
+    /// A pedal controller shown as On/Off.
+    Switch(u8),
+    /// A GS NRPN tone modify (msb 0x01), shown as the unit's signed
+    /// offset: the wire's 14-114 printed as -50..=+50.
+    Offset(u8),
 }
 
-impl PartParam {
-    fn read(self, engine: &Engine, part: usize) -> u8 {
+impl PartItem {
+    fn value(self, engine: &Engine, part: usize) -> i32 {
         match self {
-            Self::Cc(cc) => engine.part_cc_value(part, cc),
-            Self::Nrpn(msb, lsb) => engine.part_nrpn_wire(part, msb, lsb),
+            Self::Mode => engine.part_drums(part) as i32,
+            Self::MonoPoly => engine.part_mono(part) as i32,
+            Self::VoiceReserve => engine.part_voice_reserve(part) as i32,
+            Self::FineTune => engine.part_fine_tune(part) as i32,
+            Self::RxBank => engine.part_rx_bank(part) as i32,
+            Self::RxNrpn => engine.part_rx_nrpn(part) as i32,
+            Self::BendRange => engine.part_bend_range(part) as i32,
+            Self::ModDepth => engine.part_mod_depth(part) as i32,
+            Self::KeyRangeL => engine.part_key_range(part).0 as i32,
+            Self::KeyRangeH => engine.part_key_range(part).1 as i32,
+            Self::VeloDepth => engine.part_velo_sens(part).0 as i32,
+            Self::VeloOffset => engine.part_velo_sens(part).1 as i32,
+            Self::Cc(cc) | Self::Switch(cc) => engine.part_cc_value(part, cc) as i32,
+            Self::Offset(lsb) => engine.part_nrpn_wire(part, 0x01, lsb) as i32 - 64,
         }
     }
 
-    fn write(self, engine: &mut Engine, part: usize, value: u8) {
+    fn set(self, engine: &mut Engine, part: usize, value: i32) {
         match self {
-            Self::Cc(cc) => engine.send_part_cc(part, cc, value),
-            Self::Nrpn(msb, lsb) => engine.send_part_nrpn(part, msb, lsb, value),
+            Self::Mode => engine.set_part_drums(part, value != 0),
+            Self::MonoPoly => engine.set_part_mono(part, value != 0),
+            Self::VoiceReserve => engine.set_part_voice_reserve(part, value as u8),
+            Self::FineTune => engine.set_part_fine_tune(part, value as i8),
+            Self::RxBank => engine.set_part_rx_bank(part, value != 0),
+            Self::RxNrpn => engine.set_part_rx_nrpn(part, value != 0),
+            Self::BendRange => engine.set_part_bend_range(part, value as i8),
+            Self::ModDepth => engine.set_part_mod_depth(part, value as u8),
+            Self::KeyRangeL => {
+                let (_, hi) = engine.part_key_range(part);
+                engine.set_part_key_range(part, (value as u8).min(hi), hi);
+            }
+            Self::KeyRangeH => {
+                let (lo, _) = engine.part_key_range(part);
+                engine.set_part_key_range(part, lo, (value as u8).max(lo));
+            }
+            Self::VeloDepth => {
+                let (_, offset) = engine.part_velo_sens(part);
+                engine.set_part_velo_sens(part, value as u8, offset);
+            }
+            Self::VeloOffset => {
+                let (depth, _) = engine.part_velo_sens(part);
+                engine.set_part_velo_sens(part, depth, value as u8);
+            }
+            Self::Cc(cc) => engine.send_part_cc(part, cc, value as u8),
+            Self::Switch(cc) => engine.send_part_cc(part, cc, if value != 0 { 127 } else { 0 }),
+            Self::Offset(lsb) => engine.send_part_nrpn(part, 0x01, lsb, (value + 64) as u8),
         }
     }
+
+    /// The value's travel, in its own display units.
+    fn range(self) -> (i32, i32) {
+        match self {
+            Self::Mode | Self::MonoPoly | Self::Switch(_) | Self::RxBank | Self::RxNrpn => (0, 1),
+            Self::VoiceReserve => (0, 28),
+            Self::FineTune => (-12, 12),
+            Self::BendRange => (-24, 24),
+            Self::ModDepth | Self::VeloDepth | Self::VeloOffset | Self::Cc(_) => (0, 127),
+            Self::KeyRangeL | Self::KeyRangeH => (0, 127),
+            Self::Offset(_) => (-50, 50),
+        }
+    }
+
+    /// The value as the glass prints it.
+    fn print(self, value: i32) -> String {
+        match self {
+            Self::Mode => if value != 0 { "Drum" } else { "Norm" }.to_string(),
+            Self::MonoPoly => if value != 0 { "Mono" } else { "Poly" }.to_string(),
+            Self::Switch(_) => if value >= 64 { "On" } else { "Off" }.to_string(),
+            Self::RxBank | Self::RxNrpn => if value != 0 { "On" } else { "Off" }.to_string(),
+            Self::BendRange | Self::FineTune => shift_label(value as i8),
+            Self::KeyRangeL | Self::KeyRangeH => note_name(value as u8),
+            Self::Offset(_) => shift_label(value.clamp(-50, 50) as i8),
+            _ => value.to_string(),
+        }
+    }
+
+    /// A switch steps between its two states; everything else walks a
+    /// notch at a time.
+    fn stepped(self, value: i32, step: i32) -> i32 {
+        let (lo, hi) = self.range();
+        match self {
+            Self::Switch(_) => {
+                if step > 0 {
+                    127
+                } else {
+                    0
+                }
+            }
+            _ => (value + step).clamp(lo, hi),
+        }
+    }
+}
+
+/// The system menu: the unit's own list, less the LCD contrast a real
+/// panel needs and an emulated one does not.
+const SYSTEM_MENU: [(&str, SystemItem); 9] = [
+    ("M. Tune", SystemItem::MasterTune),
+    ("Reverb", SystemItem::ReverbType),
+    ("Chorus", SystemItem::ChorusType),
+    ("Display", SystemItem::Display),
+    ("Peak Hold", SystemItem::PeakHold),
+    ("Rx Inst Chg", SystemItem::RxInstChg),
+    ("Rx SysEx", SystemItem::RxSysEx),
+    ("Rx GS Reset", SystemItem::RxGsReset),
+    ("Back Up", SystemItem::BackUp),
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SystemItem {
+    MasterTune,
+    ReverbType,
+    ChorusType,
+    Display,
+    PeakHold,
+    RxInstChg,
+    RxSysEx,
+    RxGsReset,
+    BackUp,
+}
+
+/// The reverb characters' names, 0-7 on the wire's macro order.
+const REVERB_TYPES: [&str; 8] = [
+    "Room1",
+    "Room2",
+    "Room3",
+    "Hall1",
+    "Hall2",
+    "Plate",
+    "Delay",
+    "Pan Delay",
+];
+
+impl SystemItem {
+    fn value(self, engine: &Engine) -> i32 {
+        match self {
+            Self::MasterTune => engine.master_tune_tenths() as i32,
+            Self::ReverbType => engine.reverb_type() as i32,
+            Self::ChorusType => engine.chorus_type().index() as i32,
+            Self::Display => engine.display_type() as i32,
+            Self::PeakHold => engine.peak_hold() as i32,
+            Self::RxInstChg => engine.rx_inst_chg() as i32,
+            Self::RxSysEx => engine.rx_sysex() as i32,
+            Self::RxGsReset => engine.rx_gs_reset() as i32,
+            Self::BackUp => engine.backup() as i32,
+        }
+    }
+
+    fn set(self, engine: &mut Engine, value: i32) {
+        match self {
+            Self::MasterTune => engine.set_master_tune_tenths(value as u16),
+            Self::ReverbType => engine.set_reverb_type(value as u8),
+            Self::ChorusType => {
+                engine.set_chorus_type(crate::synth::ChorusType::from_index(value as u8))
+            }
+            Self::Display => engine.set_display_type(value as u8),
+            Self::PeakHold => engine.set_peak_hold(value as u8),
+            Self::RxInstChg => engine.set_rx_inst_chg(value != 0),
+            Self::RxSysEx => engine.set_rx_sysex(value != 0),
+            Self::RxGsReset => engine.set_rx_gs_reset(value != 0),
+            Self::BackUp => engine.set_backup(value != 0),
+        }
+    }
+
+    fn range(self) -> (i32, i32) {
+        match self {
+            Self::MasterTune => (4153, 4662),
+            Self::ReverbType | Self::ChorusType => (0, 7),
+            Self::Display => (1, 8),
+            Self::PeakHold => (0, 3),
+            _ => (0, 1),
+        }
+    }
+
+    fn print(self, value: i32) -> String {
+        match self {
+            Self::MasterTune => format!("{}.{}", value / 10, value % 10),
+            Self::ReverbType => REVERB_TYPES[value.clamp(0, 7) as usize].to_string(),
+            Self::ChorusType => crate::synth::ChorusType::from_index(value as u8)
+                .label()
+                .to_string(),
+            Self::Display => format!("Type{value}"),
+            Self::PeakHold => {
+                if value == 0 {
+                    "Off".to_string()
+                } else {
+                    format!("Type{value}")
+                }
+            }
+            _ => if value != 0 { "On" } else { "Off" }.to_string(),
+        }
+    }
+}
+
+/// The menu line as the unit composes it: the item's name at the
+/// left, the value right-justified so its last character sits in the
+/// twentieth column.
+fn menu_line(name: &str, value: &str) -> String {
+    let label = format!(">{name}:");
+    let pad = NAME_COLS.saturating_sub(label.len() + value.len());
+    format!("{label}{}{value}", " ".repeat(pad))
+}
+
+/// The note name for a key number, spaced as the unit prints it:
+/// C -1 to G 9.
+fn note_name(key: u8) -> String {
+    const NAMES: [&str; 12] = [
+        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+    ];
+    let octave = key as i32 / 12 - 1;
+    format!("{}{octave}", NAMES[key as usize % 12])
 }
 
 /// A message on the name line.
@@ -234,6 +469,98 @@ const DEMO_GAP_MS: u64 = 3000;
 pub const NAME_COLS: usize = 20;
 /// The bar matrix: sixteen columns of sixteen dots.
 pub const BAR_ROWS: u32 = 16;
+/// The power-on show, played on the matrix from the moment the unit
+/// wakes and never interrupted by the meters: a sparkle condenses
+/// into the letters, they pulse, burst, give way to the framed badge,
+/// and dissolve to the resting baseline -- the hardware's own boot
+/// choreography, wearing this unit's initials.
+const BOOT_SHOW_MS: u64 = 3_850;
+/// The letters CS as column masks, twelve rows tall, C left, S right.
+const BOOT_CS: [u16; PARTS] = [
+    0x0000, 0x0000, 0x1FF8, 0x300C, 0x300C, 0x300C, 0x3C3C, 0x0000, 0x0000, 0x1F18, 0x318C, 0x318C,
+    0x318C, 0x38FC, 0x0000, 0x0000,
+];
+/// The same letters squeezed to their spines, for the pulse.
+const BOOT_CS_NARROW: [u16; PARTS] = [
+    0x0000, 0x0000, 0x0000, 0x1FF8, 0x300C, 0x3C3C, 0x0000, 0x0000, 0x0000, 0x0000, 0x1F18, 0x318C,
+    0x38FC, 0x0000, 0x0000, 0x0000,
+];
+/// The badge: double borders top and bottom, two pillars standing in
+/// the frame.
+const BOOT_BADGE: [u16; PARTS] = [
+    0x0000, 0xC003, 0xC003, 0xFFFF, 0xFFFF, 0xFFFF, 0xC003, 0xC003, 0xC003, 0xC003, 0xFFFF, 0xFFFF,
+    0xFFFF, 0xC003, 0xC003, 0x0000,
+];
+
+/// A deterministic scatter: whether dot (`c`, `r`) sparkles under
+/// `salt`, one dot in `density`.
+fn boot_scatter(c: usize, r: u32, salt: u64, density: u64) -> bool {
+    let mut x = ((c as u64) << 32) ^ ((r as u64) << 8) ^ salt.wrapping_mul(0x9E3779B97F4A7C15);
+    x ^= x >> 33;
+    x = x.wrapping_mul(0xFF51AFD7ED558CCD);
+    x ^= x >> 33;
+    x.is_multiple_of(density)
+}
+
+/// Each dot's own moment within a phase, spread deterministically.
+fn boot_moment(c: usize, r: u32, from: u64, span: u64) -> u64 {
+    let mut x = ((c as u64) << 16) ^ (r as u64).wrapping_mul(0x2545F4914F6CDD1D);
+    x ^= x >> 29;
+    x = x.wrapping_mul(0xBF58476D1CE4E5B9);
+    x ^= x >> 32;
+    from + x % span
+}
+
+/// The show's frame for `elapsed` milliseconds since the wake.
+fn boot_show_bars(elapsed: u64) -> [u16; PARTS] {
+    let mut bars = [0u16; PARTS];
+    let e = elapsed;
+    for (c, bar) in bars.iter_mut().enumerate() {
+        for r in 0..BAR_ROWS {
+            let bit = 1u16 << r;
+            let lit = match e {
+                // A breath on the resting baseline.
+                0..=69 => r == 0,
+                // The sparkle condenses into the letters: each of
+                // their dots arrives at its own moment, while stray
+                // dots glitter and thin out.
+                70..=999 => {
+                    let target = BOOT_CS[c] & bit != 0;
+                    if target {
+                        e >= boot_moment(c, r, 150, 800)
+                    } else {
+                        let density = 6 + (e - 70) / 120;
+                        boot_scatter(c, r, e / 70, density)
+                    }
+                }
+                // The letters stand, squeeze to their spines, and
+                // stand again.
+                1_000..=1_599 => BOOT_CS[c] & bit != 0,
+                1_600..=1_749 => BOOT_CS_NARROW[c] & bit != 0,
+                1_750..=1_899 => BOOT_CS[c] & bit != 0,
+                // The burst: the letters' dots scatter and die.
+                1_900..=2_149 => {
+                    let density = 3 + (e - 1_900) / 60;
+                    boot_scatter(c, r, e / 70, density)
+                }
+                // The badge sweeps in from the left and holds.
+                2_150..=3_249 => BOOT_BADGE[c] & bit != 0 && e >= 2_150 + c as u64 * 12,
+                // The dissolve: each badge dot dies at its own moment,
+                // the last glitter thinning behind it.
+                3_250..=3_699 => {
+                    let badge = BOOT_BADGE[c] & bit != 0;
+                    (badge && e < boot_moment(c, r, 3_250, 400)) || boot_scatter(c, r, e / 70, 24)
+                }
+                // And the resting baseline, ready for the meters.
+                _ => r == 0,
+            };
+            if lit {
+                *bar |= bit;
+            }
+        }
+    }
+    bars
+}
 /// How fast a bar falls once the sound under it has, full scale per
 /// millisecond; the peak dot holds, then falls a row at a time.
 const BAR_FALL_PER_MS: f32 = 0.006;
@@ -259,9 +586,6 @@ pub struct FrontPanel {
     init_started: Option<u64>,
     /// When the credits started rolling, for their scroll clock.
     credits_started: Option<u64>,
-    /// Every part's parameters as they stood when the part-parameter
-    /// editor opened; MUTE restores the lot.
-    part_param_snapshot: Option<Box<[[u8; PART_PARAMS.len()]; PARTS]>>,
     message: Option<Message>,
     picture: Option<([u16; PARTS], Option<u64>)>,
     /// When the playing demo song ran out, while the gap rests.
@@ -282,7 +606,6 @@ impl Default for FrontPanel {
             boot_done: false,
             init_started: None,
             credits_started: None,
-            part_param_snapshot: None,
             message: None,
             picture: None,
             demo_ended: None,
@@ -296,13 +619,17 @@ impl Default for FrontPanel {
 impl FrontPanel {
     /// The buttons held while the power came on, read the way the unit
     /// reads its own fascia at start-up.
-    pub fn power_on_held(&mut self, held: &[Button]) {
+    pub fn power_on_held(&mut self, engine: &mut Engine, held: &[Button]) {
         let is =
             |want: &[Button]| held.len() == want.len() && want.iter().all(|b| held.contains(b));
         if is(&[Button::Both(Pair::Part)]) {
             // Both PART halves: demo mode, armed on song one and
             // waiting for ALL, MUTE lamp lit, exactly as the unit
-            // arrives in it.
+            // arrives in it. The demo songs are GS songs: the unit
+            // formats itself to the basic setting on the way in, and
+            // MIDI IN stays shut for the whole visit.
+            engine.gs_reset();
+            engine.set_wire_closed(true);
             self.mode = Mode::Demo {
                 song: 0,
                 playing: false,
@@ -314,14 +641,32 @@ impl FrontPanel {
             self.mode = Mode::ConfirmMt32;
             self.boot_done = true;
         } else if is(&[Button::Arrow(Pair::Instrument, Dir::Right)]) {
-            // The other half of the pair asks the factory question.
-            self.mode = Mode::ConfirmFont;
+            // The other half of the pair asks the GS question.
+            self.mode = Mode::ConfirmGs;
+            self.boot_done = true;
+        } else if is(&[Button::Both(Pair::Instrument)]) {
+            // The whole pair asks the factory question.
+            self.mode = Mode::ConfirmAll;
             self.boot_done = true;
         } else if is(&[Button::Both(Pair::MidiCh), Button::Both(Pair::Instrument)]) {
             // Undocumented, as the tradition demands: the credits roll
             // until ALL or MUTE lets the boot go on.
             self.mode = Mode::Credits;
             self.boot_done = true;
+        }
+    }
+
+    /// The power on its way out: demo mode does not survive the
+    /// switch. Leaving the demo by any door -- the exit combo or the
+    /// power itself -- returns the unit to the GS basic setting, or
+    /// the demo songs' own housekeeping would go into the battery as
+    /// if it were yours.
+    pub fn power_off(&mut self, engine: &mut Engine) {
+        if matches!(self.mode, Mode::Demo { .. }) {
+            engine.demo_stop();
+            engine.gs_reset();
+            engine.set_wire_closed(false);
+            self.mode = Mode::Home;
         }
     }
 
@@ -335,17 +680,14 @@ impl FrontPanel {
         self.init_started = None;
     }
 
-    /// Whether an edit or confirm screen owns the glass -- the host
-    /// holds its latching gestures back while one does.
+    /// Whether a confirm screen owns the glass -- the host holds its
+    /// latching gestures back while one does, so the flashing lamps
+    /// keep their one meaning. The menus are not in this set: their
+    /// own grammar leans on the latched pairs.
     pub fn in_edit(&self) -> bool {
         matches!(
             self.mode,
-            Mode::ConfirmMt32
-                | Mode::ConfirmFont
-                | Mode::Initializing
-                | Mode::EditDeviceId { .. }
-                | Mode::EditChorusType { .. }
-                | Mode::EditPartParams { .. }
+            Mode::ConfirmMt32 | Mode::ConfirmGs | Mode::ConfirmAll | Mode::Initializing
         )
     }
 
@@ -367,11 +709,29 @@ impl FrontPanel {
         if self.mode == Mode::Initializing {
             return None;
         }
-        // The factory prompt: ALL initialises (the host swaps the bank
-        // while the screen holds), MUTE carries on with the one loaded.
-        if self.mode == Mode::ConfirmFont {
+        // The GS prompt: ALL returns the unit to the GS basic setting,
+        // MUTE carries on as it stands.
+        if self.mode == Mode::ConfirmGs {
             return match b {
                 Button::All => {
+                    engine.gs_reset();
+                    self.mode = Mode::Home;
+                    self.notice("GS Initialized");
+                    None
+                }
+                Button::Mute => {
+                    self.mode = Mode::Home;
+                    None
+                }
+                _ => None,
+            };
+        }
+        // The factory prompt: ALL initialises everything (the host
+        // swaps the bank back while the screen holds), MUTE carries on.
+        if self.mode == Mode::ConfirmAll {
+            return match b {
+                Button::All => {
+                    engine.factory_reset();
                     self.mode = Mode::Initializing;
                     Some(PanelRequest::ResetSoundfont)
                 }
@@ -382,148 +742,78 @@ impl FrontPanel {
                 _ => None,
             };
         }
-        // The service edits: the opening pair's arrows cycle the value,
-        // ALL commits, MUTE cancels, everything else waits.
-        if let Mode::EditDeviceId { pending } = self.mode {
+        // The menus: ALL and MUTE walk the items, the INSTRUMENT
+        // arrows set the value live -- exactly as the values apply on
+        // the unit -- and the PART pair leaves. In the part menu the
+        // PART arrows move between parts with the item held.
+        if let Mode::SystemMenu { item } = self.mode {
             match b {
-                Button::Arrow(Pair::MidiCh, dir) => {
-                    let step: i32 = if dir == Dir::Left { -1 } else { 1 };
-                    let next = (pending as i32 - 1 + step).rem_euclid(32) + 1;
-                    self.mode = Mode::EditDeviceId {
-                        pending: next as u8,
-                    };
-                }
                 Button::All => {
-                    engine.set_device_id(pending);
-                    self.mode = Mode::Home;
-                    self.notice(&format!("Device ID {pending}"));
-                }
-                Button::Mute => self.mode = Mode::Home,
-                _ => {}
-            }
-            return None;
-        }
-        if let Mode::EditChorusType { pending, original } = self.mode {
-            match b {
-                Button::Arrow(Pair::Chorus, dir) => {
-                    let step: i32 = if dir == Dir::Left { -1 } else { 1 };
-                    let next = (pending as i32 + step).rem_euclid(9) as u8;
-                    // The selection sounds at once, so the ear can
-                    // choose; ALL keeps it, MUTE puts the original back.
-                    engine.set_chorus_type(crate::synth::ChorusType::from_index(next));
-                    self.mode = Mode::EditChorusType {
-                        pending: next,
-                        original,
+                    self.mode = Mode::SystemMenu {
+                        item: item.saturating_sub(1),
                     };
-                }
-                Button::All => {
-                    engine.set_chorus_type(crate::synth::ChorusType::from_index(pending));
-                    self.mode = Mode::Home;
-                    self.notice("Chorus params saved");
                 }
                 Button::Mute => {
-                    engine.set_chorus_type(crate::synth::ChorusType::from_index(original));
-                    self.mode = Mode::Home;
+                    self.mode = Mode::SystemMenu {
+                        item: (item + 1).min(SYSTEM_MENU.len() - 1),
+                    };
                 }
+                Button::Arrow(Pair::Instrument, dir) => {
+                    let (_, kind) = SYSTEM_MENU[item];
+                    let step: i32 = if dir == Dir::Left { -1 } else { 1 };
+                    let (lo, hi) = kind.range();
+                    kind.set(engine, (kind.value(engine) + step).clamp(lo, hi));
+                }
+                Button::Both(Pair::Part) => self.mode = Mode::Home,
                 _ => {}
             }
             return None;
         }
-        if let Mode::EditPartParams { param, all } = self.mode {
-            let (_, kind) = PART_PARAMS[param];
+        if let Mode::PartMenu { item } = self.mode {
+            // ALL walks back toward Part Mode at the head, MUTE walks
+            // forward; neither wraps -- checked against a real unit.
+            match b {
+                Button::All => {
+                    self.mode = Mode::PartMenu {
+                        item: item.saturating_sub(1),
+                    };
+                }
+                Button::Mute => {
+                    self.mode = Mode::PartMenu {
+                        item: (item + 1).min(PART_MENU.len() - 1),
+                    };
+                }
+                Button::Arrow(Pair::Instrument, dir) => {
+                    let (_, kind) = PART_MENU[item];
+                    let step: i32 = if dir == Dir::Left { -1 } else { 1 };
+                    kind.set(
+                        engine,
+                        self.part,
+                        kind.stepped(kind.value(engine, self.part), step),
+                    );
+                }
+                Button::Arrow(Pair::Part, dir) => {
+                    let step: i32 = if dir == Dir::Left { -1 } else { 1 };
+                    self.part = (self.part as i32 + step).rem_euclid(PARTS as i32) as usize;
+                }
+                Button::Both(Pair::Part) => self.mode = Mode::Home,
+                _ => {}
+            }
+            return None;
+        }
+        // Variation select: the INSTRUMENT arrows walk the banks the
+        // font offers for the part's instrument, sounding as they go;
+        // the pair again puts the plain number back on the glass.
+        if self.mode == Mode::VariationEdit {
             match b {
                 Button::Arrow(Pair::Instrument, dir) => {
                     let step: i32 = if dir == Dir::Left { -1 } else { 1 };
-                    let next = (param as i32 + step).rem_euclid(PART_PARAMS.len() as i32);
-                    self.mode = Mode::EditPartParams {
-                        param: next as usize,
-                        all,
-                    };
-                }
-                Button::Arrow(Pair::Level, dir) => {
-                    let step: i32 = if dir == Dir::Left { -1 } else { 1 };
-                    // The wire's own range: 0-127 for the controllers,
-                    // 14-114 (the chart's 0EH-72H) for the relative
-                    // tone modifies.
-                    let (lo, hi) = match kind {
-                        PartParam::Cc(_) => (0, 127),
-                        PartParam::Nrpn(..) => (14, 114),
-                    };
-                    let value = (kind.read(engine, self.part) as i32 + step).clamp(lo, hi);
-                    // Sounding at once, so the ear can judge it -- on
-                    // every part when ALL stands.
-                    if all {
-                        for part in 0..PARTS {
-                            kind.write(engine, part, value as u8);
-                        }
-                    } else {
-                        kind.write(engine, self.part, value as u8);
+                    if let Some(bank) = engine.neighbour_variation(self.part, step) {
+                        engine.set_part_variation(self.part, bank);
                     }
                 }
-                Button::Arrow(Pair::Part, dir) => {
-                    // A PART press snaps out of ALL first; after that it
-                    // walks the parts as ever.
-                    if all {
-                        self.all = false;
-                        self.mode = Mode::EditPartParams { param, all: false };
-                    } else {
-                        let step: i32 = if dir == Dir::Left { -1 } else { 1 };
-                        self.part = (self.part as i32 + step).rem_euclid(PARTS as i32) as usize;
-                    }
-                }
-                Button::All => {
-                    self.part_param_snapshot = None;
+                Button::Both(Pair::Instrument) | Button::Both(Pair::Part) => {
                     self.mode = Mode::Home;
-                    self.notice("Part params saved");
-                }
-                Button::Mute => {
-                    if let Some(snapshot) = self.part_param_snapshot.take() {
-                        for (part, values) in snapshot.iter().enumerate() {
-                            for (i, &value) in values.iter().enumerate() {
-                                let (_, kind) = PART_PARAMS[i];
-                                if kind.read(engine, part) != value {
-                                    kind.write(engine, part, value);
-                                }
-                            }
-                        }
-                    }
-                    self.mode = Mode::Home;
-                }
-                _ => {}
-            }
-            return None;
-        }
-        // MUTE latched under an arrow opens the service edits, seeded
-        // on what is in force; elsewhere the gesture means nothing.
-        if let Button::MuteArrow(pair, _) = b {
-            match pair {
-                Pair::MidiCh => {
-                    self.mode = Mode::EditDeviceId {
-                        pending: engine.device_id(),
-                    };
-                }
-                Pair::Chorus => {
-                    let original = engine.chorus_type().index();
-                    self.mode = Mode::EditChorusType {
-                        pending: original,
-                        original,
-                    };
-                }
-                Pair::Instrument => {
-                    // Everything as it stands, for MUTE to put back.
-                    let mut snapshot = Box::new([[0u8; PART_PARAMS.len()]; PARTS]);
-                    for (part, values) in snapshot.iter_mut().enumerate() {
-                        for (i, value) in values.iter_mut().enumerate() {
-                            *value = PART_PARAMS[i].1.read(engine, part);
-                        }
-                    }
-                    self.part_param_snapshot = Some(snapshot);
-                    // Entered with ALL lit, the edits land on all
-                    // sixteen parts at once.
-                    self.mode = Mode::EditPartParams {
-                        param: 0,
-                        all: self.all,
-                    };
                 }
                 _ => {}
             }
@@ -552,6 +842,16 @@ impl FrontPanel {
         // PART arrows pick the song -- switching mid-song plays on.
         if let Mode::Demo { song, playing } = self.mode {
             match b {
+                Button::Monitor => {
+                    engine.demo_stop();
+                    // Leaving is the mirror of arriving: the GS basic
+                    // setting again, and MIDI IN opens back up.
+                    engine.gs_reset();
+                    engine.set_wire_closed(false);
+                    self.mode = Mode::Home;
+                    self.demo_ended = None;
+                    return None;
+                }
                 Button::All => {
                     engine.demo_play(song);
                     self.mode = Mode::Demo {
@@ -609,10 +909,21 @@ impl FrontPanel {
             Button::All => self.all = !self.all,
             Button::Mute => self.press_mute(engine),
             Button::Monitor => self.press_monitor(engine),
+            // The PART pair opens the menus: the system menu with ALL
+            // lit, the part menu with it dark.
+            Button::Both(Pair::Part) => {
+                self.mode = if self.all {
+                    Mode::SystemMenu { item: 0 }
+                } else {
+                    Mode::PartMenu { item: 0 }
+                };
+            }
+            // The INSTRUMENT pair opens variation select on a part.
+            Button::Both(Pair::Instrument) if !self.all => {
+                self.mode = Mode::VariationEdit;
+            }
             Button::Both(pair) => self.toggle_view(pair),
             Button::Arrow(pair, dir) => self.press_arrow(engine, pair, dir),
-            // Handled (or dismissed) before this match; nothing to do.
-            Button::MuteArrow(..) => {}
         }
         None
     }
@@ -676,14 +987,15 @@ impl FrontPanel {
             return finished(screen);
         }
         match self.mode {
-            Mode::ConfirmMt32 | Mode::ConfirmFont => {
+            Mode::ConfirmMt32 | Mode::ConfirmGs | Mode::ConfirmAll => {
                 screen.part = String::new();
                 screen.instrument = String::new();
-                screen.name = if self.mode == Mode::ConfirmMt32 {
-                    "Init MT-32, Sure?".to_string()
-                } else {
-                    "Init SoundFont,Sure?".to_string()
-                };
+                screen.name = match self.mode {
+                    Mode::ConfirmMt32 => "Init MT-32, Sure?",
+                    Mode::ConfirmGs => "Init GS, Sure?",
+                    _ => "Init All, Sure?",
+                }
+                .to_string();
                 // ALL says yes and MUTE says no; their lamps flash to
                 // say the question is theirs.
                 let flash_on = (now_ms / FLASH_MS).is_multiple_of(2);
@@ -696,42 +1008,29 @@ impl FrontPanel {
                 screen.name = "Initializing...".to_string();
                 dash_values(&mut screen);
             }
-            Mode::EditDeviceId { pending } => {
-                screen.part = String::new();
+            Mode::SystemMenu { item } => {
+                let (name, kind) = SYSTEM_MENU[item];
+                screen.part = "ALL".to_string();
                 screen.instrument = String::new();
-                screen.name = format!("Device ID: {pending}");
+                screen.name = menu_line(name, &kind.print(kind.value(engine)));
                 dash_values(&mut screen);
-                let flash_on = (now_ms / FLASH_MS).is_multiple_of(2);
-                screen.all_led = flash_on;
-                screen.mute_led = flash_on;
+                screen.all_led = true;
             }
-            Mode::EditPartParams { param, all } => {
-                let (name, kind) = PART_PARAMS[param];
-                screen.part = if all {
-                    "ALL".to_string()
-                } else {
-                    format!("{:02}", self.part + 1)
-                };
+            Mode::PartMenu { item } => {
+                let (name, kind) = PART_MENU[item];
+                screen.part = format!("{:02}", self.part + 1);
                 screen.instrument = String::new();
-                screen.name = format!("{name}: {}", kind.read(engine, self.part));
+                screen.name = menu_line(name, &kind.print(kind.value(engine, self.part)));
                 dash_values(&mut screen);
-                let flash_on = (now_ms / FLASH_MS).is_multiple_of(2);
-                screen.all_led = flash_on;
-                screen.mute_led = flash_on;
+                screen.all_led = false;
             }
-            Mode::EditChorusType { pending, .. } => {
-                screen.part = String::new();
-                screen.instrument = String::new();
-                screen.name = format!("Chorus Type: {pending}");
-                // The type's name rides the second line, so the number
-                // means something.
-                screen.subtitle = crate::synth::ChorusType::from_index(pending)
-                    .label()
-                    .to_string();
-                dash_values(&mut screen);
-                let flash_on = (now_ms / FLASH_MS).is_multiple_of(2);
-                screen.all_led = flash_on;
-                screen.mute_led = flash_on;
+            Mode::VariationEdit => {
+                // The instrument field wears the variation number and
+                // the name its slash, exactly the unit's own display.
+                let view = engine.part_view(self.part);
+                screen.part = format!("{:02}", self.part + 1);
+                screen.instrument = format!("{:03}", engine.part_bank(self.part));
+                screen.name = format!("/{}", view.name).chars().take(NAME_COLS).collect();
             }
             Mode::Credits => {
                 screen.part = String::new();
@@ -869,11 +1168,6 @@ impl FrontPanel {
     }
 
     fn toggle_view(&mut self, pair: Pair) {
-        // PART together is the unit's menu system, which is not here;
-        // the value pairs toggle their bar view.
-        if pair == Pair::Part {
-            return;
-        }
         self.mode = if self.mode == Mode::View(pair) {
             Mode::Home
         } else {
@@ -925,10 +1219,13 @@ impl FrontPanel {
                         engine.set_part_key_shift(p, v as i8);
                     }
                 }
-                // A receive channel is each part's own; there is no
-                // "every part at once" to step, so the pair sits inert
-                // with its value dashed.
-                Pair::Part | Pair::Instrument | Pair::MidiCh => {}
+                // With ALL lit the MIDI CH arrows turn the Device ID,
+                // 1-32, shown in the MIDI CH cell -- the unit's own
+                // arrangement.
+                Pair::MidiCh => {
+                    engine.set_device_id((engine.device_id() as i32 + step(0)).clamp(1, 32) as u8);
+                }
+                Pair::Part | Pair::Instrument => {}
             }
             return;
         }
@@ -946,7 +1243,7 @@ impl FrontPanel {
             Pair::Instrument => {
                 let next = if view.drums {
                     // Kits are a list, and the list is the font's.
-                    engine.neighbour_kit(step(0)).unwrap_or(0)
+                    engine.neighbour_kit(part, step(0)).unwrap_or(0)
                 } else {
                     // Melodic numbers never shift: a hole in a sparse
                     // font stays a numbered slot, shown as Empty.
@@ -1021,11 +1318,13 @@ impl FrontPanel {
                 reverb: show(PartSetting::Reverb, |v| v.to_string()),
                 chorus: show(PartSetting::Chorus, |v| v.to_string()),
                 key_shift: show(PartSetting::KeyShift, |v| shift_label(v as i8)),
-                // No single channel speaks for sixteen parts.
-                midi_ch: "---".to_string(),
+                // The MIDI CH cell serves the Device ID with ALL lit,
+                // as on the unit -- its arrows turn it directly.
+                midi_ch: engine.device_id().to_string(),
                 bars,
                 all_led: true,
                 mute_led: (0..PARTS).all(|p| engine.part_muted(p)),
+                mute_blink: monitoring,
                 translating: engine.translating(),
             };
         }
@@ -1034,7 +1333,13 @@ impl FrontPanel {
             // A drum set wears the unit's asterisk.
             format!("*{}", view.name)
         } else {
-            view.name.clone()
+            // A variation wears its mark: + for banks 1-126, # for the
+            // MT-32 map on 127, a capital bare.
+            match engine.part_bank(self.part) {
+                0 => view.name.clone(),
+                127 => format!("#{}", view.name),
+                _ => format!("+{}", view.name),
+            }
         };
         Screen {
             part: format!("{:02}", self.part + 1),
@@ -1054,7 +1359,8 @@ impl FrontPanel {
             },
             bars,
             all_led: false,
-            mute_led: view.muted || monitoring,
+            mute_led: view.muted,
+            mute_blink: monitoring,
             translating: engine.translating(),
         }
     }
@@ -1062,6 +1368,14 @@ impl FrontPanel {
     /// The matrix: live levels with a fall and a peak dot, a parameter
     /// staircase while a pair view is up, or the picture a game sent.
     fn compose_bars(&mut self, engine: &Engine, now_ms: u64) -> [u16; PARTS] {
+        // The power-on show owns the matrix from the moment the unit
+        // wakes; nothing on the wire interrupts it.
+        if let Some(started) = self.boot_started {
+            let elapsed = now_ms.saturating_sub(started);
+            if elapsed < BOOT_SHOW_MS {
+                return boot_show_bars(elapsed);
+            }
+        }
         // A picture owns the matrix while it is fresh.
         if let Some((columns, started)) = &mut self.picture {
             let held = columns.to_owned();
@@ -1080,6 +1394,8 @@ impl FrontPanel {
             .unwrap_or(0);
         self.last_tick = Some(now_ms);
         let live = engine.part_activity();
+        let display = engine.display_type();
+        let hold = engine.peak_hold();
         let mut bars = [0u16; PARTS];
         for p in 0..PARTS {
             // Perceptual lift, then a fall no faster than the eye.
@@ -1094,29 +1410,33 @@ impl FrontPanel {
                     held_at: now_ms,
                 };
             } else if now_ms.saturating_sub(peak.held_at) > PEAK_HOLD_MS {
-                // Held its moment; now it falls a row at a time until
-                // it lands.
-                peak.row = peak.row.saturating_sub(1).max(rows);
+                // Held its moment; what happens next is the peak-hold
+                // style: fall a row at a time, wink out, or float away.
+                match hold {
+                    2 => peak.row = rows,
+                    3 => {
+                        peak.row = if peak.row >= BAR_ROWS - 1 {
+                            rows
+                        } else {
+                            peak.row + 1
+                        };
+                    }
+                    _ => peak.row = peak.row.saturating_sub(1).max(rows),
+                }
                 peak.held_at = now_ms.saturating_sub(PEAK_HOLD_MS.saturating_sub(PEAK_FALL_MS));
             }
             // The baseline dot is the part being there at all; muting
             // switches it off, which is how the unit marks a mute.
-            if !engine.part_muted(p) {
-                bars[p] |= 1;
-            }
-            if rows > 0 {
-                bars[p] |= (1u32 << (rows + 1)).wrapping_sub(1) as u16;
-            }
-            if peak.row > 0 {
-                bars[p] |= 1 << peak.row.min(BAR_ROWS - 1);
-            }
+            let peak_dot = (hold != 0 && peak.row > 0).then_some(peak.row);
+            bars[p] = style_column(display, rows, !engine.part_muted(p), peak_dot);
         }
         bars
     }
 
     /// A pair held together shows its values across the parts -- the
-    /// staircase.
+    /// staircase, worn in the chosen display style.
     fn value_bars(&self, engine: &Engine, pair: Pair) -> [u16; PARTS] {
+        let display = engine.display_type();
         let mut bars = [0u16; PARTS];
         for (p, bar) in bars.iter_mut().enumerate() {
             let height = match pair {
@@ -1139,7 +1459,7 @@ impl FrontPanel {
                 Pair::Part => 0,
             };
             if height > 0 {
-                *bar = (1u32 << height).wrapping_sub(1) as u16;
+                *bar = style_column(display, height - 1, true, None);
             }
         }
         bars
@@ -1227,6 +1547,62 @@ fn finished(mut screen: Screen) -> Screen {
 /// Bar height 1..=16 for a value against its full scale.
 fn scaled(value: u32, full: u32) -> u32 {
     1 + value * (BAR_ROWS - 1) / full
+}
+
+/// One column of the matrix in one of the unit's eight display types:
+/// 1 bars, 2 a single segment, 3 and 4 the same hung from the top,
+/// 5-8 the first four in negative. The baseline dot marks the part
+/// being there at all, and the peak dot rides where the style puts it.
+fn style_column(display: u8, rows: u32, baseline: bool, peak: Option<u32>) -> u16 {
+    let top = BAR_ROWS - 1;
+    let flip = |row: u32| top - row.min(top);
+    let mut column: u16 = 0;
+    match (display.clamp(1, 8) - 1) % 4 {
+        // Bars up from the floor.
+        0 => {
+            if rows > 0 {
+                column |= (1u32 << (rows + 1)).wrapping_sub(1) as u16;
+            }
+            if baseline {
+                column |= 1;
+            }
+            if let Some(p) = peak {
+                column |= 1 << p.min(top);
+            }
+        }
+        // A single segment at the level -- one block, rising and
+        // falling alone; a separate peak dot would read as a second
+        // note.
+        1 => {
+            if rows > 0 || baseline {
+                column |= 1 << rows.min(top);
+            }
+        }
+        // Bars hung from the ceiling.
+        2 => {
+            if rows > 0 {
+                for r in 0..=rows.min(top) {
+                    column |= 1 << flip(r);
+                }
+            }
+            if baseline {
+                column |= 1 << top;
+            }
+            if let Some(p) = peak {
+                column |= 1 << flip(p);
+            }
+        }
+        // A single segment hung from the ceiling, likewise alone.
+        _ => {
+            if rows > 0 || baseline {
+                column |= 1 << flip(rows);
+            }
+        }
+    }
+    if display >= 5 {
+        column = !column;
+    }
+    column
 }
 
 /// Pan as the unit prints it: L63 to R63 around 0, and the wire's 0 as

@@ -750,3 +750,252 @@ fn nrpn_release_time_scales_the_tail() {
         "a stretched release rings longer (short {short}, long {long})"
     );
 }
+
+/// The battery-backed memory: everything the fascia can set survives a
+/// save and load into a fresh unit -- and with Back Up off in the
+/// saved bytes, only the system functions come back, the parts waking
+/// to the GS basic setting.
+#[test]
+fn the_saved_state_survives_the_night() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    e.set_device_id(20);
+    e.set_display_type(6);
+    e.set_peak_hold(3);
+    e.set_rx_inst_chg(false);
+    e.set_master_tune_tenths(4423);
+    e.set_reverb_type(1);
+    e.set_chorus_type(coppersynth::synth::ChorusType::Flanger);
+    e.set_part_drums(2, true);
+    e.set_part_bend_range(3, 12);
+    e.set_part_key_range(4, 40, 90);
+    e.set_part_velo_sens(5, 100, 70);
+    e.set_part_mono(6, true);
+    e.send_part_nrpn(7, 0x01, 0x08, 90);
+    e.set_part_rx_channel(8, None);
+    e.set_part_key_shift(1, -5);
+    e.set_part_voice_reserve(4, 10);
+    e.set_part_fine_tune(5, -7);
+    e.set_part_rx_bank(6, false);
+    e.set_part_rx_nrpn(7, false);
+    e.set_part_bend_range(8, -12);
+    let bytes = e.save_state();
+
+    let Some(mut fresh) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    fresh.load_state(&bytes);
+    assert_eq!(fresh.device_id(), 20);
+    assert_eq!(fresh.display_type(), 6);
+    assert_eq!(fresh.peak_hold(), 3);
+    assert!(!fresh.rx_inst_chg());
+    assert_eq!(fresh.master_tune_tenths(), 4423);
+    assert_eq!(fresh.reverb_type(), 1);
+    assert_eq!(fresh.chorus_type(), coppersynth::synth::ChorusType::Flanger);
+    assert!(fresh.part_drums(2), "part three wakes a drum part");
+    assert_eq!(fresh.part_bend_range(3), 12);
+    assert_eq!(fresh.part_key_range(4), (40, 90));
+    assert_eq!(fresh.part_velo_sens(5), (100, 70));
+    assert!(fresh.part_mono(6));
+    assert_eq!(fresh.part_nrpn_wire(7, 0x01, 0x08), 90);
+    assert_eq!(fresh.part_view(8).rx_channel, None);
+    assert_eq!(fresh.part_view(1).key_shift, -5);
+    assert_eq!(fresh.part_voice_reserve(4), 10);
+    assert_eq!(fresh.part_fine_tune(5), -7);
+    assert!(!fresh.part_rx_bank(6));
+    assert!(!fresh.part_rx_nrpn(7));
+    assert_eq!(fresh.part_bend_range(8), -12);
+
+    // Back Up off: the system functions land, the parts wake to GS.
+    e.set_backup(false);
+    let bytes = e.save_state();
+    let Some(mut fresh) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    fresh.load_state(&bytes);
+    assert_eq!(fresh.device_id(), 20, "system functions always land");
+    assert!(!fresh.backup());
+    assert!(
+        !fresh.part_drums(2),
+        "the parts wake to the GS basic setting"
+    );
+    assert_eq!(fresh.part_bend_range(3), 2);
+
+    // Damaged bytes leave the unit as it stands.
+    let Some(mut fresh) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    fresh.load_state(&bytes[..20]);
+    assert_eq!(fresh.device_id(), 17);
+}
+
+/// A GS reset on the wire returns the unit to the GS basic setting --
+/// unless the Rx GS Reset switch says not to listen.
+#[test]
+fn the_wire_gs_reset_honours_its_switch() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    const GS_RESET: [u8; 11] = [
+        0xF0, 0x41, 0x10, 0x42, 0x12, 0x40, 0x00, 0x7F, 0x00, 0x41, 0xF7,
+    ];
+    e.set_part_drums(2, true);
+    e.set_master_reverb(10);
+    send(&mut e, &GS_RESET);
+    assert!(!e.part_drums(2), "the reset puts the parts home");
+    assert_eq!(e.master_reverb(), 64);
+    assert_eq!(e.device_id(), 17, "system functions stand");
+
+    e.set_rx_gs_reset(false);
+    e.set_master_reverb(10);
+    send(&mut e, &GS_RESET);
+    assert_eq!(e.master_reverb(), 10, "the switch keeps the reset out");
+}
+
+/// The Rx SysEx switch drops exclusives whole: a display letter never
+/// arrives, while channel messages play on.
+#[test]
+fn the_rx_sysex_switch_drops_exclusives() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    e.set_rx_sysex(false);
+    // The SC-55 display letter "HI" -- normally a panel feed.
+    let mut msg = vec![0xF0, 0x41, 0x10, 0x45, 0x12, 0x10, 0x00, 0x00];
+    msg.extend_from_slice(b"HI");
+    let sum: u32 = msg[5..].iter().map(|&b| b as u32).sum();
+    msg.push(((128 - (sum % 128)) % 128) as u8);
+    msg.push(0xF7);
+    send(&mut e, &msg);
+    assert!(
+        e.take_panel_feed().is_empty(),
+        "the letter fell on the floor"
+    );
+    // A note after the dropped exclusive still sounds.
+    send(&mut e, &[0x90, 60, 100]);
+    assert!(e.voices().0 > 0, "channel traffic plays on");
+}
+
+/// Key Range gates the part's notes at the front door, and the
+/// velocity curve shapes what passes.
+#[test]
+fn key_range_gates_and_the_curve_shapes() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    e.set_part_key_range(0, 48, 72);
+    send(&mut e, &[0x90, 40, 100]);
+    assert_eq!(e.voices().0, 0, "below the window, no voice");
+    send(&mut e, &[0x90, 60, 100]);
+    assert!(e.voices().0 > 0, "inside the window, the note sounds");
+}
+
+/// The reverb characters genuinely differ: a small dampened room dies
+/// away sooner than the big hall, and the Delay characters produce a
+/// discrete repeat -- panned down the middle for Delay, and walking
+/// the stage for Panning Delay.
+#[test]
+fn the_reverb_characters_have_characters() {
+    // A staccato hit, then silence: the tail is the room's own.
+    let tail = |reverb_type: u8| -> Vec<(f32, f32)> {
+        let Some(mut e) = engine(Mt32Mode::Off) else {
+            return Vec::new();
+        };
+        e.set_reverb_type(reverb_type);
+        e.set_part_reverb(0, 127);
+        send(&mut e, &[0xC0, 115, 0x90, 72, 127]);
+        let mut hit = vec![(0.0f32, 0.0f32); 4_410];
+        e.render(&mut hit);
+        send(&mut e, &[0x80, 72, 0]);
+        let mut out = vec![(0.0f32, 0.0f32); 66_150];
+        e.render(&mut out);
+        out
+    };
+    let room2 = tail(1);
+    if room2.is_empty() {
+        return;
+    }
+    let hall2 = tail(4);
+    // The late tail: a second and a half in, the hall still rings
+    // where the small room has gone quiet.
+    let late = |buf: &[(f32, f32)]| rms_of(&buf[52_920..]);
+    assert!(
+        late(&hall2) > late(&room2) * 1.5,
+        "the hall outlasts the small room (hall {}, room {})",
+        late(&hall2),
+        late(&room2)
+    );
+    // The Delay character: the tail's loudest moment sits near the
+    // repeat time, not at the front as a room's would.
+    let echo = tail(6);
+    let window = 2_205;
+    let loudest = (0..echo.len() - window)
+        .step_by(window)
+        .max_by(|&a, &b| {
+            rms_of(&echo[a..a + window])
+                .partial_cmp(&rms_of(&echo[b..b + window]))
+                .unwrap()
+        })
+        .unwrap();
+    // The tail render starts a tenth of a second in, so the repeat of
+    // the hit's onset lands that much earlier in the buffer.
+    let hit = 4_410;
+    let repeat = (0.32f32 * 44_100.0) as usize - hit;
+    assert!(
+        loudest + window > repeat && loudest < repeat + 3 * window,
+        "the repeat stands where the delay put it (loudest at {loudest}, repeat {repeat})"
+    );
+    // Panning Delay: the first repeat leans left, the second right.
+    let pan = tail(7);
+    let lean = |at: usize| {
+        let slice = &pan[at..at + window];
+        let l = (slice.iter().map(|&(x, _)| x * x).sum::<f32>() / window as f32).sqrt();
+        let r = (slice.iter().map(|&(_, x)| x * x).sum::<f32>() / window as f32).sqrt();
+        l - r
+    };
+    let first = (0.28f32 * 44_100.0) as usize - hit;
+    let second = first + (0.28f32 * 44_100.0) as usize;
+    assert!(
+        lean(first) > 0.0 && lean(second) < 0.0,
+        "the repeats walk the stage (first {}, second {})",
+        lean(first),
+        lean(second)
+    );
+}
+
+/// The off-line watch: a stream keeping itself alive with active
+/// sensing that then goes silent is a dropped line -- everything
+/// sounding is released, quietly. A stream that never sensed holds
+/// its notes, exactly like hardware.
+#[test]
+fn active_sensing_going_quiet_releases_everything() {
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    send(&mut e, &[0xFE, 0x90, 60, 100, 0xFE]);
+    assert!(e.voices().0 > 0, "the note sounds");
+    // Nearly half a second of silence on a sensed line: the watch
+    // trips, the voices release, the glass says so.
+    let mut out = vec![(0.0f32, 0.0f32); 44_100];
+    e.render(&mut out);
+    let mut tail = vec![(0.0f32, 0.0f32); 88_200];
+    e.render(&mut tail);
+    assert_eq!(
+        e.voices().0,
+        0,
+        "the held chord lets go after the line drops"
+    );
+    assert!(
+        e.take_panel_feed().is_empty(),
+        "and the glass carries no error for it"
+    );
+    // An unsensed stream holds its notes -- hardware would too.
+    let Some(mut e) = engine(Mt32Mode::Off) else {
+        return;
+    };
+    send(&mut e, &[0x90, 60, 100]);
+    let mut out = vec![(0.0f32, 0.0f32); 88_200];
+    e.render(&mut out);
+    assert!(e.voices().0 > 0, "no sensing, no watch, the note holds");
+}

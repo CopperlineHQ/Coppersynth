@@ -44,6 +44,8 @@ pub struct Synthesizer {
     master_reverb_gain: f32,
     master_chorus_gain: f32,
     chorus_type: ChorusType,
+    /// The reverb character 0-7, Room 1 to Panning Delay.
+    reverb_type: u8,
 
     effects: Option<Effects>,
 }
@@ -136,7 +138,8 @@ impl Synthesizer {
             master_volume,
             master_reverb_gain: 1.0_f32,
             master_chorus_gain: 1.0_f32,
-            chorus_type: ChorusType::Chorus2,
+            chorus_type: ChorusType::Chorus3,
+            reverb_type: 4,
             effects,
         })
     }
@@ -276,6 +279,15 @@ impl Synthesizer {
         if !(0 <= channel && channel < self.channels.len() as i32) {
             return;
         }
+
+        // The part's playable window and velocity curve stand at the
+        // front door: a note outside Key Range L/H never sounds, and
+        // one inside arrives at the shaped velocity.
+        let (lo, hi) = self.channels[channel as usize].key_range();
+        if !(lo as i32..=hi as i32).contains(&key) {
+            return;
+        }
+        let velocity = self.channels[channel as usize].shaped_velocity(velocity);
 
         // Portamento first: a Portamento Control source armed ahead of
         // this note re-tunes a sounding voice of that key in place --
@@ -540,11 +552,8 @@ impl Synthesizer {
                 chorus_output_left,
                 chorus_output_right,
             );
-            let chorus_gain = if self.chorus_type == ChorusType::Off {
-                0.0
-            } else {
-                self.master_volume * self.master_chorus_gain * Synthesizer::CHORUS_RETURN
-            };
+            let chorus_gain =
+                self.master_volume * self.master_chorus_gain * Synthesizer::CHORUS_RETURN;
             ArrayMath::multiply_add(chorus_gain, chorus_output_left, &mut self.block_left[..]);
             ArrayMath::multiply_add(chorus_gain, chorus_output_right, &mut self.block_right[..]);
 
@@ -740,6 +749,135 @@ impl Synthesizer {
     pub fn set_master_chorus_gain(&mut self, value: f32) {
         self.master_chorus_gain = value;
     }
+
+    /// The reverb character in force, 0-7.
+    pub fn reverb_type(&self) -> u8 {
+        self.reverb_type
+    }
+
+    /// Swap the reverb for another character. The rack is rebuilt
+    /// silent, exactly as the chorus's macro switch is.
+    pub fn set_reverb_type(&mut self, reverb_type: u8) {
+        let reverb_type = reverb_type.min(7);
+        if reverb_type == self.reverb_type {
+            return;
+        }
+        self.reverb_type = reverb_type;
+        if let Some(effects) = self.effects.as_mut() {
+            effects.reverb = Reverb::of_type(self.sample_rate, reverb_type);
+        }
+    }
+
+    /// The unit's master tune, applied to every channel in one go.
+    pub fn set_master_tune(&mut self, semitones: f32) {
+        for channel in self.channels.iter_mut() {
+            channel.set_master_tune(semitones);
+        }
+    }
+
+    /// Whether `channel` is a drum part.
+    pub fn is_percussion(&self, channel: i32) -> bool {
+        self.channels
+            .get(channel as usize)
+            .is_some_and(|c| c.is_percussion_channel)
+    }
+
+    /// Make `channel` a drum part or a normal one. The change stops its
+    /// notes and puts the part on the mode's first instrument, exactly
+    /// as the unit's Part Mode switch does.
+    pub fn set_percussion(&mut self, channel: i32, on: bool) {
+        if !(0 <= channel && channel < self.channels.len() as i32) {
+            return;
+        }
+        if self.channels[channel as usize].is_percussion_channel == on {
+            return;
+        }
+        self.note_off_all_channel(channel, true);
+        self.channels[channel as usize].set_percussion(on);
+    }
+
+    /// The part's playable window.
+    pub fn channel_key_range(&self, channel: i32) -> (u8, u8) {
+        self.channels
+            .get(channel as usize)
+            .map(|c| c.key_range())
+            .unwrap_or((0, 127))
+    }
+
+    pub fn set_channel_key_range(&mut self, channel: i32, lo: u8, hi: u8) {
+        if let Some(c) = self.channels.get_mut(channel as usize) {
+            c.set_key_range(lo, hi);
+        }
+    }
+
+    /// The part's velocity curve (depth, offset).
+    pub fn channel_velo_sens(&self, channel: i32) -> (u8, u8) {
+        self.channels
+            .get(channel as usize)
+            .map(|c| c.velo_sens())
+            .unwrap_or((64, 64))
+    }
+
+    pub fn set_channel_velo_sens(&mut self, channel: i32, depth: u8, offset: u8) {
+        if let Some(c) = self.channels.get_mut(channel as usize) {
+            c.set_velo_sens(depth, offset);
+        }
+    }
+
+    /// The part's bend range in semitones, signed.
+    pub fn channel_bend_range(&self, channel: i32) -> i8 {
+        self.channels
+            .get(channel as usize)
+            .map(|c| c.bend_range_semitones())
+            .unwrap_or(2)
+    }
+
+    pub fn set_channel_bend_range(&mut self, channel: i32, semitones: i8) {
+        if let Some(c) = self.channels.get_mut(channel as usize) {
+            c.set_bend_range_semitones(semitones);
+        }
+    }
+
+    /// The part's fine tune, the panel's -12..=+12.
+    pub fn channel_fine_tune_display(&self, channel: i32) -> i8 {
+        self.channels
+            .get(channel as usize)
+            .map(|c| c.fine_tune_display())
+            .unwrap_or(0)
+    }
+
+    pub fn set_channel_fine_tune_display(&mut self, channel: i32, value: i8) {
+        if let Some(c) = self.channels.get_mut(channel as usize) {
+            c.set_fine_tune_display(value);
+        }
+    }
+
+    /// Whether the part plays one note at a time.
+    pub fn channel_mono(&self, channel: i32) -> bool {
+        self.channels
+            .get(channel as usize)
+            .is_some_and(|c| c.mono())
+    }
+
+    pub fn set_channel_mono(&mut self, channel: i32, mono: bool) {
+        if let Some(c) = self.channels.get_mut(channel as usize) {
+            c.set_mono_mode(mono);
+        }
+    }
+
+    /// The part's modulation depth.
+    pub fn channel_mod_depth(&self, channel: i32) -> u8 {
+        self.channels
+            .get(channel as usize)
+            .map(|c| c.mod_depth())
+            .unwrap_or(10)
+    }
+
+    pub fn set_channel_mod_depth(&mut self, channel: i32, depth: u8) {
+        if let Some(c) = self.channels.get_mut(channel as usize) {
+            c.set_mod_depth(depth);
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -759,13 +897,13 @@ struct Effects {
 impl Effects {
     fn new(settings: &SynthesizerSettings) -> Effects {
         Self {
-            reverb: Reverb::new(settings.sample_rate),
+            reverb: Reverb::of_type(settings.sample_rate, 4),
             reverb_input: vec![0_f32; settings.block_size],
             reverb_output_left: vec![0_f32; settings.block_size],
             reverb_output_right: vec![0_f32; settings.block_size],
             // The unit wakes in Chorus 2 -- the hardware's own default
             // is Chorus 3, but 2's quicker sweep carries further.
-            chorus: Chorus::of_type(settings.sample_rate, ChorusType::Chorus2),
+            chorus: Chorus::of_type(settings.sample_rate, ChorusType::Chorus3),
             chorus_input_left: vec![0_f32; settings.block_size],
             chorus_input_right: vec![0_f32; settings.block_size],
             chorus_output_left: vec![0_f32; settings.block_size],

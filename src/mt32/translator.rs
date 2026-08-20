@@ -50,6 +50,9 @@ pub enum Event {
     Picture([u16; 16]),
     /// Auto mode decided: true once MT-32 traffic is identified.
     Translating(bool),
+    /// A GM System On or GS reset arrived: the unit returns to the GS
+    /// basic setting when its Rx GS Reset switch allows.
+    GsReset,
 }
 
 /// One patch-memory entry, as far as translation cares.
@@ -418,6 +421,7 @@ impl Mt32Translator {
         // Universal GM reset: 7E dev 09 01|02|03.
         if body.len() >= 4 && body[0] == 0x7E && body[2] == 0x09 {
             self.leave_mt32();
+            self.events.push(Event::GsReset);
             return;
         }
         // Roland DT1 to a GS device (Sound Canvas class): 41 dev 42 12
@@ -478,7 +482,10 @@ impl Mt32Translator {
                     self.events.push(Event::MasterVolume(v & 0x7F));
                 }
             }
-            a if a == SYSTEM | 0x7F => self.leave_mt32(),
+            a if a == SYSTEM | 0x7F => {
+                self.leave_mt32();
+                self.events.push(Event::GsReset);
+            }
             _ => {}
         }
     }

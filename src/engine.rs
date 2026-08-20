@@ -122,6 +122,13 @@ struct Parts {
     /// Where each sounding note landed after the shift, so its note-off
     /// finds it whatever the shift has become since.
     sounded: [[u8; 128]; PARTS],
+    /// Voice Reserve, as the unit stores and shows it. Our well has
+    /// more voices than the hardware's, so nothing starves and the
+    /// number never has to act; it is kept because the unit keeps it.
+    voice_rsv: [u8; PARTS],
+    /// Per-part reception switches: bank select, and NRPN.
+    rx_bank: [bool; PARTS],
+    rx_nrpn: [bool; PARTS],
 }
 
 impl Parts {
@@ -138,6 +145,11 @@ impl Parts {
             wire_level: [100; PARTS],
             locks: [0; PARTS],
             sounded: [[SILENT; 128]; PARTS],
+            // The GS factory reserve: six for the drum part, two each
+            // for the melodic fifteen.
+            voice_rsv: std::array::from_fn(|p| if p == DRUM_PART { 6 } else { 2 }),
+            rx_bank: [true; PARTS],
+            rx_nrpn: [true; PARTS],
         }
     }
 }
@@ -185,6 +197,27 @@ pub struct Engine {
     /// traffic, so leaving that mode can put Standard back.
     cm64_selected: bool,
     demo: Option<Demo>,
+    /// The system functions, as the unit's own menu groups them: kept
+    /// across a GS reset, stored regardless of the Back Up switch.
+    rx_inst_chg: bool,
+    rx_sysex: bool,
+    rx_gs_reset: bool,
+    backup: bool,
+    /// The bar display style 1-8 and the peak-hold style 0 (off) to 3.
+    display_type: u8,
+    peak_hold: u8,
+    /// Master tune in tenths of a hertz, 4153..=4662 around A=440.0.
+    master_tune_tenths: u16,
+    /// Whether the byte stream is inside a sysex message, for the Rx
+    /// SysEx switch to skip one whole.
+    in_sysex: bool,
+    /// Whether MIDI IN is ignored wholesale -- demo mode closes the
+    /// door, as the hardware does, even between songs.
+    wire_closed: bool,
+    /// The off-line watch: whether active sensing has been seen, and
+    /// how many frames have rendered since the last byte arrived.
+    sensing: bool,
+    silent_frames: u64,
 }
 
 impl Engine {
@@ -267,6 +300,17 @@ impl Engine {
             device_id: 17,
             cm64_selected: false,
             demo: None,
+            rx_inst_chg: true,
+            rx_sysex: true,
+            rx_gs_reset: true,
+            backup: true,
+            display_type: 1,
+            peak_hold: 1,
+            master_tune_tenths: 4400,
+            in_sysex: false,
+            wire_closed: false,
+            sensing: false,
+            silent_frames: 0,
         };
         engine.set_master_volume_cc(127);
         Ok(engine)
@@ -284,9 +328,32 @@ impl Engine {
 
     /// Take one byte off the serial line.
     pub fn write_byte(&mut self, byte: u8) {
-        // A unit playing its demo ignores MIDI IN, as the hardware does.
-        if self.demo.is_some() {
+        // A unit in its demo mode ignores MIDI IN, as the hardware
+        // does -- between songs as much as during one.
+        if self.wire_closed || self.demo.is_some() {
             return;
+        }
+        self.silent_frames = 0;
+        // Active sensing arms the off-line watch and carries nothing
+        // else; being real-time, it never enters the framing below.
+        if byte == 0xFE {
+            self.sensing = true;
+            return;
+        }
+        // The Rx SysEx switch: off, exclusives fall on the floor whole,
+        // and everything else plays on.
+        if byte == 0xF0 {
+            self.in_sysex = true;
+        }
+        if self.in_sysex {
+            let ends = byte == 0xF7;
+            if ends {
+                self.in_sysex = false;
+            }
+            if !self.rx_sysex {
+                return;
+            }
+            let _ = ends;
         }
         // Drain into locals first: the borrow of the translator ends
         // before the synthesizer is touched.
@@ -306,6 +373,11 @@ impl Engine {
                 }
                 Event::Picture(rows) => self.panel_feed.push(Feed::Picture(rows)),
                 Event::Translating(active) => self.follow_translation(active),
+                Event::GsReset => {
+                    if self.rx_gs_reset {
+                        self.gs_reset();
+                    }
+                }
             }
         }
     }
@@ -345,9 +417,19 @@ impl Engine {
                     }
                 }
                 // A locked setting is the panel's now; the wire's word
-                // no longer reaches it.
+                // no longer reaches it -- and with Rx Inst Chg off, no
+                // part changes instrument from the wire at all.
+                0xC0 if !self.rx_inst_chg => {}
                 0xC0 if self.parts.locks[part] & LOCK_PROGRAM != 0 => {}
                 0xB0 => {
+                    // The part's own reception switches: bank select
+                    // and NRPN fall on the floor when turned away.
+                    if matches!(data1, 0 | 32) && !self.parts.rx_bank[part] {
+                        continue;
+                    }
+                    if matches!(data1, 98 | 99) && !self.parts.rx_nrpn[part] {
+                        continue;
+                    }
                     let locks = self.parts.locks[part];
                     let handled = match data1 {
                         7 => {
@@ -386,7 +468,7 @@ impl Engine {
     /// moving a kit's keys renames its instruments rather than
     /// transposing them.
     fn shifted_key(&self, part: usize, key: u8) -> u8 {
-        if part == DRUM_PART {
+        if self.synth.is_percussion(part as i32) {
             return key;
         }
         (key as i16 + self.parts.key_shift[part] as i16 + self.master_shift as i16).clamp(0, 127)
@@ -398,6 +480,17 @@ impl Engine {
         // The synthesizer wants split channels; the scratch pair grows
         // to the largest block asked for and is never given back.
         let n = frames.len();
+        // The off-line watch: a stream that kept itself alive with
+        // active sensing and then stopped means the line is gone --
+        // the player force-quit, the cable pulled -- and the unit
+        // releases everything rather than holding the last chord
+        // forever. 420 ms, as the standard prescribes.
+        if self.sensing {
+            self.silent_frames += n as u64;
+            if self.silent_frames > self.sample_rate as u64 * 42 / 100 {
+                self.midi_off_line();
+            }
+        }
         self.pump_demo(n);
         self.scratch_left.resize(n, 0.0);
         self.scratch_right.resize(n, 0.0);
@@ -459,7 +552,7 @@ impl Engine {
             key_shift: self.parts.key_shift[part],
             rx_channel: self.parts.rx_channel.get(part).copied().flatten(),
             muted: self.parts.mute[part],
-            drums: part == DRUM_PART,
+            drums: self.synth.is_percussion(part as i32),
         }
     }
 
@@ -481,14 +574,14 @@ impl Engine {
     /// the soundfont's own kit list. Kits are a list by nature; melodic
     /// programs are numbered slots and step plainly so their numbers
     /// stay put. `None` when the font carries no kits at all.
-    pub fn neighbour_kit(&self, step: i32) -> Option<u8> {
+    pub fn neighbour_kit(&self, part: usize, step: i32) -> Option<u8> {
         let list = &self.drum_programs;
         if list.is_empty() {
             return None;
         }
         let current = self
             .synth
-            .channel_bank_patch(DRUM_PART)
+            .channel_bank_patch(part)
             .map(|(_, patch)| patch as u8)
             .unwrap_or(0);
         // Where the current program sits, or would sit; a step then
@@ -502,6 +595,52 @@ impl Engine {
             Err(i) => i as i32 - 1,
         };
         Some(list[at.rem_euclid(len) as usize])
+    }
+
+    /// The banks the font offers for the part's current instrument,
+    /// walking from the current bank in `step`'s direction with
+    /// wraparound; `None` on a drum part (kits ignore banks) or when
+    /// the font has nothing to walk.
+    pub fn neighbour_variation(&self, part: usize, step: i32) -> Option<u8> {
+        let (bank, patch) = self.synth.channel_bank_patch(part)?;
+        if bank >= 128 {
+            return None;
+        }
+        let mut banks: Vec<u8> = self
+            .synth
+            .get_sound_font()
+            .get_presets()
+            .iter()
+            .filter(|p| p.get_patch_number() == patch && p.get_bank_number() < 128)
+            .map(|p| p.get_bank_number() as u8)
+            .collect();
+        banks.sort_unstable();
+        banks.dedup();
+        if banks.is_empty() {
+            return None;
+        }
+        let len = banks.len() as i32;
+        let at = match banks.binary_search(&(bank as u8)) {
+            Ok(i) => i as i32 + step,
+            Err(i) if step > 0 => i as i32,
+            Err(i) => i as i32 - 1,
+        };
+        Some(banks[at.rem_euclid(len) as usize])
+    }
+
+    /// Put the part on a variation bank of its current instrument, the
+    /// wire's own way: bank select completed by the program change.
+    pub fn set_part_variation(&mut self, part: usize, bank: u8) {
+        let (_, patch) = self.synth.channel_bank_patch(part).unwrap_or((0, 0));
+        self.synth
+            .process_midi_message(part as i32, 0xB0, 0, bank as i32);
+        self.synth.process_midi_message(part as i32, 0xC0, patch, 0);
+    }
+
+    /// The part's current bank, 0-127, for the variation display.
+    pub fn part_bank(&self, part: usize) -> u8 {
+        let (bank, _) = self.synth.channel_bank_patch(part).unwrap_or((0, 0));
+        (bank & 0x7F) as u8
     }
 
     /// Peak amplitude per part, 0..=1-ish, for the level meters.
@@ -785,6 +924,17 @@ impl Engine {
         }
     }
 
+    /// The line went away under a stream that was keeping itself
+    /// alive: everything sounding is released. Also the host's word
+    /// for a machine reset -- the source power-cycling is the line
+    /// dropping, whether or not it sensed. Quietly: the glass carrying
+    /// an error through every ordinary boot would say less, not more.
+    pub fn midi_off_line(&mut self) {
+        self.sensing = false;
+        self.in_sysex = false;
+        self.all_notes_off();
+    }
+
     // --- the masters the panel's ALL mode turns --------------------------
 
     /// Master volume as the wire's 0..=127. The audible mapping puts
@@ -850,6 +1000,11 @@ impl Engine {
         self.device_id = id.clamp(1, 32);
     }
 
+    /// Close or open MIDI IN wholesale: demo mode's door.
+    pub fn set_wire_closed(&mut self, closed: bool) {
+        self.wire_closed = closed;
+    }
+
     /// The ALL-and-MUTE monitor.
     pub fn monitor(&self) -> Monitor {
         self.monitor
@@ -866,6 +1021,386 @@ impl Engine {
                     self.parts.sounded[part] = [SILENT; 128];
                 }
             }
+        }
+    }
+
+    // --- the system functions --------------------------------------------
+
+    /// Master tune in tenths of a hertz around A4: 4153..=4662, 4400
+    /// standard pitch.
+    pub fn master_tune_tenths(&self) -> u16 {
+        self.master_tune_tenths
+    }
+
+    pub fn set_master_tune_tenths(&mut self, tenths: u16) {
+        self.master_tune_tenths = tenths.clamp(4153, 4662);
+        let hz = self.master_tune_tenths as f32 / 10.0;
+        self.synth.set_master_tune(12.0 * (hz / 440.0).log2());
+    }
+
+    /// The reverb character 0-7, Room1 to Panning Delay.
+    pub fn reverb_type(&self) -> u8 {
+        self.synth.reverb_type()
+    }
+
+    pub fn set_reverb_type(&mut self, reverb_type: u8) {
+        self.synth.set_reverb_type(reverb_type);
+    }
+
+    pub fn rx_inst_chg(&self) -> bool {
+        self.rx_inst_chg
+    }
+
+    pub fn set_rx_inst_chg(&mut self, on: bool) {
+        self.rx_inst_chg = on;
+    }
+
+    pub fn rx_sysex(&self) -> bool {
+        self.rx_sysex
+    }
+
+    pub fn set_rx_sysex(&mut self, on: bool) {
+        self.rx_sysex = on;
+    }
+
+    pub fn rx_gs_reset(&self) -> bool {
+        self.rx_gs_reset
+    }
+
+    pub fn set_rx_gs_reset(&mut self, on: bool) {
+        self.rx_gs_reset = on;
+    }
+
+    /// The Back Up switch: whether the saved state is restored at the
+    /// next power-on, or the unit wakes to the GS basic setting.
+    pub fn backup(&self) -> bool {
+        self.backup
+    }
+
+    pub fn set_backup(&mut self, on: bool) {
+        self.backup = on;
+    }
+
+    /// The bar display style, 1-8.
+    pub fn display_type(&self) -> u8 {
+        self.display_type
+    }
+
+    pub fn set_display_type(&mut self, display_type: u8) {
+        self.display_type = display_type.clamp(1, 8);
+    }
+
+    /// The peak-hold style: 0 off, 1 falls, 2 winks out, 3 floats up.
+    pub fn peak_hold(&self) -> u8 {
+        self.peak_hold
+    }
+
+    pub fn set_peak_hold(&mut self, peak_hold: u8) {
+        self.peak_hold = peak_hold.min(3);
+    }
+
+    // --- part functions ---------------------------------------------------
+
+    /// Whether `part` is a drum part.
+    pub fn part_drums(&self, part: usize) -> bool {
+        self.synth.is_percussion(part as i32)
+    }
+
+    /// Part Mode: make `part` a drum part on the font's first kit, or a
+    /// normal part back on Piano 1.
+    pub fn set_part_drums(&mut self, part: usize, drums: bool) {
+        self.synth.set_percussion(part as i32, drums);
+        if drums {
+            let kit = self.drum_programs.first().copied().unwrap_or(0);
+            self.synth
+                .process_midi_message(part as i32, 0xC0, kit as i32, 0);
+        }
+    }
+
+    /// Bend Range in semitones, -24..=+24 -- negative bends the other
+    /// way, as the unit's own panel allows.
+    pub fn part_bend_range(&self, part: usize) -> i8 {
+        self.synth.channel_bend_range(part as i32)
+    }
+
+    pub fn set_part_bend_range(&mut self, part: usize, semitones: i8) {
+        self.synth
+            .set_channel_bend_range(part as i32, semitones.clamp(-24, 24));
+    }
+
+    /// Fine Tune as the unit shows it, -12..=+12: the full RPN fine
+    /// range of a semitone either way, in the panel's twelve steps.
+    pub fn part_fine_tune(&self, part: usize) -> i8 {
+        self.synth.channel_fine_tune_display(part as i32)
+    }
+
+    pub fn set_part_fine_tune(&mut self, part: usize, value: i8) {
+        self.synth
+            .set_channel_fine_tune_display(part as i32, value.clamp(-12, 12));
+    }
+
+    /// Voice Reserve, kept and shown as the unit keeps it. This well
+    /// runs deeper than the hardware's, so nothing ever starves and
+    /// the number never has to act.
+    pub fn part_voice_reserve(&self, part: usize) -> u8 {
+        self.parts.voice_rsv.get(part).copied().unwrap_or(2)
+    }
+
+    pub fn set_part_voice_reserve(&mut self, part: usize, voices: u8) {
+        if let Some(slot) = self.parts.voice_rsv.get_mut(part) {
+            *slot = voices.min(28);
+        }
+    }
+
+    /// The part's bank-select reception switch.
+    pub fn part_rx_bank(&self, part: usize) -> bool {
+        self.parts.rx_bank.get(part).copied().unwrap_or(true)
+    }
+
+    pub fn set_part_rx_bank(&mut self, part: usize, on: bool) {
+        if let Some(slot) = self.parts.rx_bank.get_mut(part) {
+            *slot = on;
+        }
+    }
+
+    /// The part's NRPN reception switch.
+    pub fn part_rx_nrpn(&self, part: usize) -> bool {
+        self.parts.rx_nrpn.get(part).copied().unwrap_or(true)
+    }
+
+    pub fn set_part_rx_nrpn(&mut self, part: usize, on: bool) {
+        if let Some(slot) = self.parts.rx_nrpn.get_mut(part) {
+            *slot = on;
+        }
+    }
+
+    /// Key Range L/H as note numbers.
+    pub fn part_key_range(&self, part: usize) -> (u8, u8) {
+        self.synth.channel_key_range(part as i32)
+    }
+
+    pub fn set_part_key_range(&mut self, part: usize, lo: u8, hi: u8) {
+        self.synth.set_channel_key_range(part as i32, lo, hi);
+    }
+
+    /// Velocity Sens (depth, offset), 64/64 neutral.
+    pub fn part_velo_sens(&self, part: usize) -> (u8, u8) {
+        self.synth.channel_velo_sens(part as i32)
+    }
+
+    pub fn set_part_velo_sens(&mut self, part: usize, depth: u8, offset: u8) {
+        self.synth.set_channel_velo_sens(part as i32, depth, offset);
+    }
+
+    /// M/P Mode: whether the part plays one note at a time.
+    pub fn part_mono(&self, part: usize) -> bool {
+        self.synth.channel_mono(part as i32)
+    }
+
+    pub fn set_part_mono(&mut self, part: usize, mono: bool) {
+        self.synth.set_channel_mono(part as i32, mono);
+    }
+
+    /// Modulation Depth, the GS factory 10 neutral.
+    pub fn part_mod_depth(&self, part: usize) -> u8 {
+        self.synth.channel_mod_depth(part as i32)
+    }
+
+    pub fn set_part_mod_depth(&mut self, part: usize, depth: u8) {
+        self.synth.set_channel_mod_depth(part as i32, depth);
+    }
+
+    // --- resets and the saved state --------------------------------------
+
+    /// The GS basic setting: every part and all-parts value back to the
+    /// factory, the system functions untouched -- the unit's Init GS,
+    /// and what an all-reset message on the wire performs.
+    pub fn gs_reset(&mut self) {
+        self.synth.reset();
+        for part in 0..PARTS {
+            self.synth.set_percussion(part as i32, part == DRUM_PART);
+        }
+        self.parts = Parts::new();
+        self.cm64_selected = false;
+        self.set_master_volume_cc(127);
+        self.master_pan = 64;
+        self.master_shift = 0;
+        self.set_master_reverb(64);
+        self.set_master_chorus(64);
+        self.synth
+            .set_chorus_type(crate::synth::ChorusType::Chorus3);
+        self.synth.set_reverb_type(4);
+        self.set_master_tune_tenths(4400);
+    }
+
+    /// The factory preset: the GS basic setting and the system
+    /// functions too -- the unit's Init All (the host puts the built-in
+    /// bank back around it).
+    pub fn factory_reset(&mut self) {
+        self.gs_reset();
+        self.device_id = 17;
+        self.rx_inst_chg = true;
+        self.rx_sysex = true;
+        self.rx_gs_reset = true;
+        self.backup = true;
+        self.display_type = 1;
+        self.peak_hold = 1;
+    }
+
+    /// The battery-backed memory, as bytes for the host to keep: the
+    /// system functions and, for the Back Up switch to honour, the
+    /// whole current state of every part.
+    pub fn save_state(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(512);
+        out.extend_from_slice(b"CSYN");
+        out.push(2);
+        // System functions, honoured regardless of Back Up.
+        out.push(self.device_id);
+        out.push(self.rx_inst_chg as u8);
+        out.push(self.rx_sysex as u8);
+        out.push(self.rx_gs_reset as u8);
+        out.push(self.backup as u8);
+        out.push(self.display_type);
+        out.push(self.peak_hold);
+        // The all-parts settings.
+        out.push(self.master_volume_cc);
+        out.push(self.master_pan);
+        out.push(self.master_shift as u8);
+        out.push(self.master_reverb_cc);
+        out.push(self.master_chorus_cc);
+        out.push(self.synth.chorus_type().index());
+        out.push(self.synth.reverb_type());
+        out.extend_from_slice(&self.master_tune_tenths.to_le_bytes());
+        // Every part in full.
+        for part in 0..PARTS {
+            let (bank, patch) = self.synth.channel_bank_patch(part).unwrap_or((0, 0));
+            let cc = |controller| self.synth.channel_cc(part, controller).unwrap_or(0);
+            let (lo, hi) = self.part_key_range(part);
+            let (depth, offset) = self.part_velo_sens(part);
+            out.push(self.parts.rx_channel[part].map_or(0xFF, |c| c));
+            out.push(self.parts.mute[part] as u8);
+            out.push(self.parts.key_shift[part] as u8);
+            out.push(self.parts.level_cap[part]);
+            out.push(self.parts.locks[part]);
+            out.push(self.part_drums(part) as u8);
+            out.push((bank & 0xFF) as u8);
+            out.push((patch & 0x7F) as u8);
+            for controller in [10u8, 91, 93, 1, 5, 11, 65, 66, 67] {
+                out.push(cc(controller));
+            }
+            out.push(self.part_bend_range(part) as u8);
+            out.push(lo);
+            out.push(hi);
+            out.push(depth);
+            out.push(offset);
+            out.push(self.part_mod_depth(part));
+            out.push(self.synth.channel_mono(part as i32) as u8);
+            for (msb, lsb) in [
+                (0x01u8, 0x08u8),
+                (0x01, 0x09),
+                (0x01, 0x0A),
+                (0x01, 0x20),
+                (0x01, 0x21),
+                (0x01, 0x63),
+                (0x01, 0x64),
+                (0x01, 0x66),
+            ] {
+                out.push(self.part_nrpn_wire(part, msb, lsb));
+            }
+            out.push(self.part_voice_reserve(part));
+            out.push(self.part_fine_tune(part) as u8);
+            out.push(self.part_rx_bank(part) as u8);
+            out.push(self.part_rx_nrpn(part) as u8);
+        }
+        out
+    }
+
+    /// Wake up on the battery-backed memory: the system functions come
+    /// back always; the parts come back when the Back Up switch in the
+    /// saved bytes says so, and wake to the GS basic setting when it
+    /// says off. Unknown or damaged bytes leave the unit as it stands.
+    pub fn load_state(&mut self, bytes: &[u8]) {
+        const SYSTEM: usize = 5 + 7;
+        const MASTERS: usize = 9;
+        const PART: usize = 6 + 2 + 9 + 7 + 8 + 4;
+        if bytes.len() < SYSTEM + MASTERS + PARTS * PART || &bytes[..4] != b"CSYN" || bytes[4] != 2
+        {
+            return;
+        }
+        let b = &bytes[5..];
+        self.device_id = b[0].clamp(1, 32);
+        self.rx_inst_chg = b[1] != 0;
+        self.rx_sysex = b[2] != 0;
+        self.rx_gs_reset = b[3] != 0;
+        self.backup = b[4] != 0;
+        self.set_display_type(b[5]);
+        self.set_peak_hold(b[6]);
+        if !self.backup {
+            self.gs_reset();
+            return;
+        }
+        let b = &b[7..];
+        self.set_master_volume_cc(b[0].min(127));
+        self.master_pan = b[1].min(127);
+        self.master_shift = (b[2] as i8).clamp(-24, 24);
+        self.set_master_reverb(b[3].min(127));
+        self.set_master_chorus(b[4].min(127));
+        self.synth
+            .set_chorus_type(crate::synth::ChorusType::from_index(b[5]));
+        self.synth.set_reverb_type(b[6]);
+        self.set_master_tune_tenths(u16::from_le_bytes([b[7], b[8]]));
+        let mut b = &b[9..];
+        for part in 0..PARTS {
+            let p = &b[..PART];
+            self.parts.rx_channel[part] = (p[0] != 0xFF).then_some(p[0].min(15));
+            self.parts.mute[part] = p[1] != 0;
+            self.parts.key_shift[part] = (p[2] as i8).clamp(-24, 24);
+            self.parts.level_cap[part] = p[3].min(127);
+            self.parts.locks[part] = p[4];
+            let drums = p[5] != 0;
+            self.synth.set_percussion(part as i32, drums);
+            self.synth
+                .process_midi_message(part as i32, 0xB0, 0, p[6].min(127) as i32);
+            self.synth
+                .process_midi_message(part as i32, 0xC0, p[7] as i32, 0);
+            for (i, controller) in [10u8, 91, 93, 1, 5, 11, 65, 66, 67].iter().enumerate() {
+                self.synth.process_midi_message(
+                    part as i32,
+                    0xB0,
+                    *controller as i32,
+                    p[8 + i].min(127) as i32,
+                );
+            }
+            self.set_part_bend_range(part, p[17] as i8);
+            self.set_part_key_range(part, p[18], p[19]);
+            self.set_part_velo_sens(part, p[20], p[21]);
+            self.set_part_mod_depth(part, p[22]);
+            self.synth.set_channel_mono(part as i32, p[23] != 0);
+            self.set_part_voice_reserve(part, p[32]);
+            self.set_part_fine_tune(part, p[33] as i8);
+            self.set_part_rx_bank(part, p[34] != 0);
+            self.set_part_rx_nrpn(part, p[35] != 0);
+            for (i, (msb, lsb)) in [
+                (0x01u8, 0x08u8),
+                (0x01, 0x09),
+                (0x01, 0x0A),
+                (0x01, 0x20),
+                (0x01, 0x21),
+                (0x01, 0x63),
+                (0x01, 0x64),
+                (0x01, 0x66),
+            ]
+            .iter()
+            .enumerate()
+            {
+                self.send_part_nrpn(part, *msb, *lsb, p[24 + i].min(127));
+            }
+            b = &b[PART..];
+        }
+        // The level caps take effect through the usual path.
+        for part in 0..PARTS {
+            let cap = self.parts.level_cap[part];
+            self.set_part_level(part, cap);
         }
     }
 }
