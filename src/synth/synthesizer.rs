@@ -58,7 +58,15 @@ impl Synthesizer {
     /// The reverb return, calibrated so a full send is unmistakably a
     /// hall: banks' CC91 modulators top out near 0.4 of the spec's send
     /// range, and Freeverb's 0.015 input gain leaves that a whisper.
-    const REVERB_RETURN: f32 = 4.0_f32;
+    ///
+    /// Trimmed by ear afterwards. The send curve and the characters'
+    /// own returns had already been steepened twice, each pass leaving
+    /// the default further back while full send stayed put -- and the
+    /// room was still too much of the sound. This is the one gain the
+    /// whole wet path passes through, so taking it down two and a half
+    /// decibels stands every character back by the same amount at every
+    /// send, which is what "too much overall" asks for and no more.
+    const REVERB_RETURN: f32 = 3.0_f32;
     /// The chorus return, for the same reason: the unit modulates
     /// correctly but sat too quiet in the mix to be heard as more than
     /// a faint comb.

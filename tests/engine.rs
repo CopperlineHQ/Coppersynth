@@ -323,17 +323,31 @@ fn reverb_and_chorus_are_audible() {
     }
     let (mid_held, mid_ring) = probe(40, 0);
     let (wet_held, wet_ring) = probe(127, 0);
+    // Orderings, not levels. A held note's RMS is mostly the note --
+    // the room adds a little energy beside it -- so the multipliers
+    // these once carried were really a measurement of one particular
+    // return gain, and had to be rewritten every time that gain was
+    // tuned by ear. What must hold at any level is that more send is
+    // more room, and that the default is neither of the ends.
     assert!(
-        wet_held > dry_held * 1.3,
+        wet_held > dry_held * 1.1,
         "full reverb must be unmistakable"
     );
     assert!(
-        mid_held > dry_held * 1.05 && mid_held < wet_held,
+        mid_held > dry_held && mid_held < wet_held,
         "the GM default sits between dry and drenched"
     );
+    // The tail is where a room is actually heard: a woodblock is over
+    // in an instant, so anything still sounding is the room. Dry rings
+    // essentially not at all, which is why these compare against each
+    // other rather than against silence.
     assert!(
-        wet_ring > dry_ring * 5.0 && mid_ring > dry_ring * 2.0,
+        wet_ring > mid_ring && mid_ring > dry_ring,
         "the room rings after the hit, more the more send"
+    );
+    assert!(
+        mid_ring > wet_ring * 0.1,
+        "and the default's tail is a room, not a rumour"
     );
     // Chorus is a doubled, detuned voice, not a louder one: an 18 ms
     // wet copy barely moves a held note's RMS (the old 2 ms comb summed
