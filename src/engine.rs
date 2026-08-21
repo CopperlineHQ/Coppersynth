@@ -402,18 +402,14 @@ impl Engine {
                     let key = self.shifted_key(part, data1);
                     self.parts.sounded[part][data1 as usize] = key;
                     self.synth
-                        .process_midi_message(part as i32, 0x90, key as i32, data2 as i32);
+                        .process_midi_message(part as u8, 0x90, key, data2);
                 }
                 0x80 | 0x90 => {
                     let sounded = &mut self.parts.sounded[part][data1 as usize];
                     let key = std::mem::replace(sounded, SILENT);
                     if key != SILENT {
-                        self.synth.process_midi_message(
-                            part as i32,
-                            0x80,
-                            key as i32,
-                            data2 as i32,
-                        );
+                        self.synth
+                            .process_midi_message(part as u8, 0x80, key, data2);
                     }
                 }
                 // A locked setting is the panel's now; the wire's word
@@ -436,8 +432,7 @@ impl Engine {
                             // Volume passes through the cap.
                             self.parts.wire_level[part] = data2;
                             let capped = data2.min(self.parts.level_cap[part]);
-                            self.synth
-                                .process_midi_message(part as i32, 0xB0, 7, capped as i32);
+                            self.synth.process_midi_message(part as u8, 0xB0, 7, capped);
                             true
                         }
                         10 => locks & LOCK_PAN != 0,
@@ -446,20 +441,13 @@ impl Engine {
                         _ => false,
                     };
                     if !handled {
-                        self.synth.process_midi_message(
-                            part as i32,
-                            0xB0,
-                            data1 as i32,
-                            data2 as i32,
-                        );
+                        self.synth
+                            .process_midi_message(part as u8, 0xB0, data1, data2);
                     }
                 }
-                _ => self.synth.process_midi_message(
-                    part as i32,
-                    command as i32,
-                    data1 as i32,
-                    data2 as i32,
-                ),
+                _ => self
+                    .synth
+                    .process_midi_message(part as u8, command, data1, data2),
             }
         }
     }
@@ -468,7 +456,7 @@ impl Engine {
     /// moving a kit's keys renames its instruments rather than
     /// transposing them.
     fn shifted_key(&self, part: usize, key: u8) -> u8 {
-        if self.synth.is_percussion(part as i32) {
+        if self.synth.is_percussion(part as u8) {
             return key;
         }
         (key as i16 + self.parts.key_shift[part] as i16 + self.master_shift as i16).clamp(0, 127)
@@ -552,7 +540,7 @@ impl Engine {
             key_shift: self.parts.key_shift[part],
             rx_channel: self.parts.rx_channel.get(part).copied().flatten(),
             muted: self.parts.mute[part],
-            drums: self.synth.is_percussion(part as i32),
+            drums: self.synth.is_percussion(part as u8),
         }
     }
 
@@ -632,9 +620,9 @@ impl Engine {
     /// wire's own way: bank select completed by the program change.
     pub fn set_part_variation(&mut self, part: usize, bank: u8) {
         let (_, patch) = self.synth.channel_bank_patch(part).unwrap_or((0, 0));
+        self.synth.process_midi_message(part as u8, 0xB0, 0, bank);
         self.synth
-            .process_midi_message(part as i32, 0xB0, 0, bank as i32);
-        self.synth.process_midi_message(part as i32, 0xC0, patch, 0);
+            .process_midi_message(part as u8, 0xC0, patch.clamp(0, 127) as u8, 0);
     }
 
     /// The part's current bank, 0-127, for the variation display.
@@ -723,14 +711,13 @@ impl Engine {
         self.translator.set_cm64_kit(want);
         if want {
             self.synth
-                .process_midi_message(DRUM_PART as i32, 0xC0, 127, 0);
+                .process_midi_message(DRUM_PART as u8, 0xC0, 127, 0);
         } else if self
             .synth
             .channel_bank_patch(DRUM_PART)
             .is_some_and(|(_, patch)| patch == 127)
         {
-            self.synth
-                .process_midi_message(DRUM_PART as i32, 0xC0, 0, 0);
+            self.synth.process_midi_message(DRUM_PART as u8, 0xC0, 0, 0);
         }
     }
 
@@ -762,8 +749,7 @@ impl Engine {
         };
         *slot = cap.min(127);
         let capped = self.parts.wire_level[part].min(cap);
-        self.synth
-            .process_midi_message(part as i32, 0xB0, 7, capped as i32);
+        self.synth.process_midi_message(part as u8, 0xB0, 7, capped);
     }
 
     /// The other panel edits go in as the wire message they stand for,
@@ -800,7 +786,7 @@ impl Engine {
     /// A GS NRPN's current value in wire terms (relative parameters
     /// read 64 at neutral), for the same editor.
     pub fn part_nrpn_wire(&self, part: usize, msb: u8, lsb: u8) -> u8 {
-        self.synth.channel_nrpn_wire(part as i32, msb, lsb)
+        self.synth.channel_nrpn_wire(part as u8, msb, lsb)
     }
 
     /// Send one controller to a part from the fascia, exactly as the
@@ -820,18 +806,14 @@ impl Engine {
     }
 
     fn part_cc(&mut self, part: usize, controller: u8, value: u8) {
-        self.synth.process_midi_message(
-            part as i32,
-            0xB0,
-            controller as i32,
-            (value & 0x7F) as i32,
-        );
+        self.synth
+            .process_midi_message(part as u8, 0xB0, controller, value & 0x7F);
     }
 
     pub fn set_part_instrument(&mut self, part: usize, program: u8) {
         self.lock(part, LOCK_PROGRAM);
         self.synth
-            .process_midi_message(part as i32, 0xC0, (program & 0x7F) as i32, 0);
+            .process_midi_message(part as u8, 0xC0, program & 0x7F, 0);
     }
 
     pub fn set_part_key_shift(&mut self, part: usize, semitones: i8) {
@@ -854,7 +836,7 @@ impl Engine {
         };
         *slot = mute;
         if mute {
-            self.synth.note_off_all_channel(part as i32, false);
+            self.synth.note_off_all_channel(part as u8, false);
             self.parts.sounded[part] = [SILENT; 128];
         }
     }
@@ -1017,7 +999,7 @@ impl Engine {
             // monitor is let go and their own notes next arrive.
             for part in 0..PARTS {
                 if part != solo {
-                    self.synth.note_off_all_channel(part as i32, false);
+                    self.synth.note_off_all_channel(part as u8, false);
                     self.parts.sounded[part] = [SILENT; 128];
                 }
             }
@@ -1103,40 +1085,39 @@ impl Engine {
 
     /// Whether `part` is a drum part.
     pub fn part_drums(&self, part: usize) -> bool {
-        self.synth.is_percussion(part as i32)
+        self.synth.is_percussion(part as u8)
     }
 
     /// Part Mode: make `part` a drum part on the font's first kit, or a
     /// normal part back on Piano 1.
     pub fn set_part_drums(&mut self, part: usize, drums: bool) {
-        self.synth.set_percussion(part as i32, drums);
+        self.synth.set_percussion(part as u8, drums);
         if drums {
             let kit = self.drum_programs.first().copied().unwrap_or(0);
-            self.synth
-                .process_midi_message(part as i32, 0xC0, kit as i32, 0);
+            self.synth.process_midi_message(part as u8, 0xC0, kit, 0);
         }
     }
 
     /// Bend Range in semitones, -24..=+24 -- negative bends the other
     /// way, as the unit's own panel allows.
     pub fn part_bend_range(&self, part: usize) -> i8 {
-        self.synth.channel_bend_range(part as i32)
+        self.synth.channel_bend_range(part as u8)
     }
 
     pub fn set_part_bend_range(&mut self, part: usize, semitones: i8) {
         self.synth
-            .set_channel_bend_range(part as i32, semitones.clamp(-24, 24));
+            .set_channel_bend_range(part as u8, semitones.clamp(-24, 24));
     }
 
     /// Fine Tune as the unit shows it, -12..=+12: the full RPN fine
     /// range of a semitone either way, in the panel's twelve steps.
     pub fn part_fine_tune(&self, part: usize) -> i8 {
-        self.synth.channel_fine_tune_display(part as i32)
+        self.synth.channel_fine_tune_display(part as u8)
     }
 
     pub fn set_part_fine_tune(&mut self, part: usize, value: i8) {
         self.synth
-            .set_channel_fine_tune_display(part as i32, value.clamp(-12, 12));
+            .set_channel_fine_tune_display(part as u8, value.clamp(-12, 12));
     }
 
     /// Voice Reserve, kept and shown as the unit keeps it. This well
@@ -1176,38 +1157,38 @@ impl Engine {
 
     /// Key Range L/H as note numbers.
     pub fn part_key_range(&self, part: usize) -> (u8, u8) {
-        self.synth.channel_key_range(part as i32)
+        self.synth.channel_key_range(part as u8)
     }
 
     pub fn set_part_key_range(&mut self, part: usize, lo: u8, hi: u8) {
-        self.synth.set_channel_key_range(part as i32, lo, hi);
+        self.synth.set_channel_key_range(part as u8, lo, hi);
     }
 
     /// Velocity Sens (depth, offset), 64/64 neutral.
     pub fn part_velo_sens(&self, part: usize) -> (u8, u8) {
-        self.synth.channel_velo_sens(part as i32)
+        self.synth.channel_velo_sens(part as u8)
     }
 
     pub fn set_part_velo_sens(&mut self, part: usize, depth: u8, offset: u8) {
-        self.synth.set_channel_velo_sens(part as i32, depth, offset);
+        self.synth.set_channel_velo_sens(part as u8, depth, offset);
     }
 
     /// M/P Mode: whether the part plays one note at a time.
     pub fn part_mono(&self, part: usize) -> bool {
-        self.synth.channel_mono(part as i32)
+        self.synth.channel_mono(part as u8)
     }
 
     pub fn set_part_mono(&mut self, part: usize, mono: bool) {
-        self.synth.set_channel_mono(part as i32, mono);
+        self.synth.set_channel_mono(part as u8, mono);
     }
 
     /// Modulation Depth, the GS factory 10 neutral.
     pub fn part_mod_depth(&self, part: usize) -> u8 {
-        self.synth.channel_mod_depth(part as i32)
+        self.synth.channel_mod_depth(part as u8)
     }
 
     pub fn set_part_mod_depth(&mut self, part: usize, depth: u8) {
-        self.synth.set_channel_mod_depth(part as i32, depth);
+        self.synth.set_channel_mod_depth(part as u8, depth);
     }
 
     // --- resets and the saved state --------------------------------------
@@ -1218,7 +1199,7 @@ impl Engine {
     pub fn gs_reset(&mut self) {
         self.synth.reset();
         for part in 0..PARTS {
-            self.synth.set_percussion(part as i32, part == DRUM_PART);
+            self.synth.set_percussion(part as u8, part == DRUM_PART);
         }
         self.parts = Parts::new();
         self.cm64_selected = false;
@@ -1294,7 +1275,7 @@ impl Engine {
             out.push(depth);
             out.push(offset);
             out.push(self.part_mod_depth(part));
-            out.push(self.synth.channel_mono(part as i32) as u8);
+            out.push(self.synth.channel_mono(part as u8) as u8);
             for (msb, lsb) in [
                 (0x01u8, 0x08u8),
                 (0x01, 0x09),
@@ -1358,24 +1339,19 @@ impl Engine {
             self.parts.level_cap[part] = p[3].min(127);
             self.parts.locks[part] = p[4];
             let drums = p[5] != 0;
-            self.synth.set_percussion(part as i32, drums);
+            self.synth.set_percussion(part as u8, drums);
             self.synth
-                .process_midi_message(part as i32, 0xB0, 0, p[6].min(127) as i32);
-            self.synth
-                .process_midi_message(part as i32, 0xC0, p[7] as i32, 0);
+                .process_midi_message(part as u8, 0xB0, 0, p[6].min(127));
+            self.synth.process_midi_message(part as u8, 0xC0, p[7], 0);
             for (i, controller) in [10u8, 91, 93, 1, 5, 11, 65, 66, 67].iter().enumerate() {
-                self.synth.process_midi_message(
-                    part as i32,
-                    0xB0,
-                    *controller as i32,
-                    p[8 + i].min(127) as i32,
-                );
+                self.synth
+                    .process_midi_message(part as u8, 0xB0, *controller, p[8 + i].min(127));
             }
             self.set_part_bend_range(part, p[17] as i8);
             self.set_part_key_range(part, p[18], p[19]);
             self.set_part_velo_sens(part, p[20], p[21]);
             self.set_part_mod_depth(part, p[22]);
-            self.synth.set_channel_mono(part as i32, p[23] != 0);
+            self.synth.set_channel_mono(part as u8, p[23] != 0);
             self.set_part_voice_reserve(part, p[32]);
             self.set_part_fine_tune(part, p[33] as i8);
             self.set_part_rx_bank(part, p[34] != 0);

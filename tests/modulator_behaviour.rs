@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use coppersynth::synth::{SoundFont, Synthesizer, SynthesizerSettings};
 
-fn render_note(font: &Arc<SoundFont>, velocity: i32) -> (Vec<f32>, Vec<f32>) {
+fn render_note(font: &Arc<SoundFont>, velocity: u8) -> (Vec<f32>, Vec<f32>) {
     let settings = SynthesizerSettings::new(44100);
     let mut synth = Synthesizer::new(font, &settings).unwrap();
     // Program 39: Synth Bass 2, the fixture patch. A low E, half a second.
