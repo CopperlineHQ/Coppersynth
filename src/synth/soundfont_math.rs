@@ -49,8 +49,10 @@ impl SoundFontMath {
         20_f32 * x.log10()
     }
 
-    pub(crate) fn key_number_to_multiplying_factor(cents: i32, key: i32) -> f32 {
-        SoundFontMath::timecents_to_seconds((cents * (60 - key)) as f32)
+    pub(crate) fn key_number_to_multiplying_factor(cents: i32, key: u8) -> f32 {
+        // Signed on purpose: keys above middle C shorten the envelope,
+        // so the product goes negative for most of the keyboard.
+        SoundFontMath::timecents_to_seconds((cents * (60 - i32::from(key))) as f32)
     }
 
     pub(crate) fn exp_cutoff(x: f64) -> f64 {

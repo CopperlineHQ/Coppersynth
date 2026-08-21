@@ -153,23 +153,15 @@ impl Synthesizer {
     /// * `data1` - The first data part of the message.
     /// * `data2` - The second data part of the message.
     pub fn process_midi_message(&mut self, channel: u8, command: u8, data1: u8, data2: u8) {
-        // A byte each on the wire, a byte each here; the engine still
-        // thinks in i32 past this door.
-        let (channel, command, data1, data2) = (
-            i32::from(channel),
-            i32::from(command),
-            i32::from(data1),
-            i32::from(data2),
-        );
-        if channel >= self.channels.len() as i32 {
+        if usize::from(channel) >= self.channels.len() {
             return;
         }
 
-        let channel_info = &mut self.channels[channel as usize];
+        let channel_info = &mut self.channels[usize::from(channel)];
 
         match command {
-            0x80 => self.note_off_worker(channel, data1), // Note Off
-            0x90 => self.note_on_worker(channel, data1, data2), // Note On
+            0x80 => self.note_off(channel, data1),       // Note Off
+            0x90 => self.note_on(channel, data1, data2), // Note On
             0xB0 => {
                 // The raw table first: modulators may route from any CC,
                 // named or not.
@@ -202,19 +194,19 @@ impl Synthesizer {
                 0x62 => channel_info.set_nrpn_fine(data2), // NRPN Fine
                 0x65 => channel_info.set_rpn_coarse(data2), // RPN Coarse
                 0x64 => channel_info.set_rpn_fine(data2), // RPN Fine
-                0x78 => self.note_off_all_channel_worker(channel, true), // All Sound Off
-                0x79 => self.reset_all_controllers_channel_worker(channel), // Reset All Controllers
-                0x7B => self.note_off_all_channel_worker(channel, false), // All Note Off
+                0x78 => self.note_off_all_channel(channel, true), // All Sound Off
+                0x79 => self.reset_all_controllers_channel(channel), // Reset All Controllers
+                0x7B => self.note_off_all_channel(channel, false), // All Note Off
                 // Omni off/on are recognized only as all-notes-off; the
                 // mode does not change, exactly as the unit reads them.
-                0x7C | 0x7D => self.note_off_all_channel_worker(channel, false),
+                0x7C | 0x7D => self.note_off_all_channel(channel, false),
                 0x7E => { // Mono (M = 1 whatever the count asks)
                     channel_info.set_mono_mode(true);
-                    self.note_off_all_channel_worker(channel, true);
+                    self.note_off_all_channel(channel, true);
                 }
                 0x7F => { // Poly
                     channel_info.set_mono_mode(false);
-                    self.note_off_all_channel_worker(channel, true);
+                    self.note_off_all_channel(channel, true);
                 }
                 _ => (),
                 }
@@ -245,7 +237,7 @@ impl Synthesizer {
     /// The sostenuto pedal going down catches the notes sounding at
     /// that moment; coming up it lets go of them all. Notes played
     /// while it is down are never caught.
-    fn apply_sostenuto(&mut self, channel: i32, down: bool) {
+    fn apply_sostenuto(&mut self, channel: u8, down: bool) {
         for voice in self.voices.get_active_voices().iter_mut() {
             if voice.channel() == channel {
                 voice.set_sostenuto_held(down);
@@ -260,11 +252,7 @@ impl Synthesizer {
     /// * `channel` - The channel of the note.
     /// * `key` - The key of the note.
     pub fn note_off(&mut self, channel: u8, key: u8) {
-        self.note_off_worker(i32::from(channel), i32::from(key));
-    }
-
-    fn note_off_worker(&mut self, channel: i32, key: i32) {
-        if !(0 <= channel && channel < self.channels.len() as i32) {
+        if usize::from(channel) >= self.channels.len() {
             return;
         }
 
@@ -283,66 +271,64 @@ impl Synthesizer {
     /// * `key` - The key of the note.
     /// * `velocity` - The velocity of the note.
     pub fn note_on(&mut self, channel: u8, key: u8, velocity: u8) {
-        self.note_on_worker(i32::from(channel), i32::from(key), i32::from(velocity));
-    }
-
-    fn note_on_worker(&mut self, channel: i32, key: i32, velocity: i32) {
         if velocity == 0 {
-            self.note_off_worker(channel, key);
+            self.note_off(channel, key);
             return;
         }
 
-        if !(0 <= channel && channel < self.channels.len() as i32) {
+        if usize::from(channel) >= self.channels.len() {
             return;
         }
+        let channel = usize::from(channel);
 
         // The part's playable window and velocity curve stand at the
         // front door: a note outside Key Range L/H never sounds, and
         // one inside arrives at the shaped velocity.
-        let (lo, hi) = self.channels[channel as usize].key_range();
-        if !(lo as i32..=hi as i32).contains(&key) {
+        let (lo, hi) = self.channels[channel].key_range();
+        if !(lo..=hi).contains(&key) {
             return;
         }
-        let velocity = self.channels[channel as usize].shaped_velocity(velocity);
+        let velocity = self.channels[channel].shaped_velocity(velocity);
 
         // Portamento first: a Portamento Control source armed ahead of
         // this note re-tunes a sounding voice of that key in place --
         // legato, no new voice, exactly the manual's example. Armed
         // with no such voice, or with the pedal down, the new voice
         // glides in from the source instead.
-        let decay = self.portamento_decay(self.channels[channel as usize].get_portamento_time());
-        let mut glide_source: Option<i32> = None;
-        if let Some(src) = self.channels[channel as usize].take_portamento_source() {
+        let decay = self.portamento_decay(self.channels[channel].get_portamento_time());
+        let mut glide_source: Option<u8> = None;
+        if let Some(src) = self.channels[channel].take_portamento_source() {
             let mut retuned = false;
             for voice in self.voices.get_active_voices().iter_mut() {
-                if voice.channel() == channel && voice.key() == src as i32 && voice.is_sounding() {
+                if usize::from(voice.channel()) == channel
+                    && voice.key() == src
+                    && voice.is_sounding()
+                {
                     voice.retune_to(key, decay);
                     retuned = true;
                     break;
                 }
             }
             if retuned {
-                self.channels[channel as usize].set_last_key(key);
+                self.channels[channel].set_last_key(key);
                 return;
             }
-            glide_source = Some(src as i32);
-        } else if self.channels[channel as usize].get_portamento_pedal() {
-            glide_source = self.channels[channel as usize]
-                .get_last_key()
-                .map(i32::from);
+            glide_source = Some(src);
+        } else if self.channels[channel].get_portamento_pedal() {
+            glide_source = self.channels[channel].get_last_key();
         }
 
         // Mode 4: one voice at a time -- the note that arrives releases
         // whatever the channel was sounding.
-        if self.channels[channel as usize].get_mono_mode() {
+        if self.channels[channel].get_mono_mode() {
             for voice in self.voices.get_active_voices().iter_mut() {
-                if voice.channel() == channel {
+                if usize::from(voice.channel()) == channel {
                     voice.end();
                 }
             }
         }
 
-        let channel_info = &self.channels[channel as usize];
+        let channel_info = &self.channels[channel];
 
         let preset_id = (channel_info.get_bank_number() << 16) | channel_info.get_patch_number();
 
@@ -374,11 +360,13 @@ impl Synthesizer {
                     if instrument_region.contains(key, velocity) {
                         let region_pair = RegionPair::new(preset_region, instrument_region);
 
-                        if let Some(value) = self.voices.request_new(instrument_region, channel) {
+                        if let Some(value) =
+                            self.voices.request_new(instrument_region, channel as u8)
+                        {
                             value.start(
                                 &region_pair,
-                                &self.channels[channel as usize],
-                                channel,
+                                &self.channels[channel],
+                                channel as u8,
                                 key,
                                 velocity,
                             );
@@ -390,7 +378,7 @@ impl Synthesizer {
                 }
             }
         }
-        self.channels[channel as usize].set_last_key(key);
+        self.channels[channel].set_last_key(key);
     }
 
     /// Stops all the notes in the specified channel.
@@ -415,10 +403,6 @@ impl Synthesizer {
     /// * `channel` - The channel in which the notes will be stopped.
     /// * `immediate` - If `true`, notes will stop immediately without the release sound.
     pub fn note_off_all_channel(&mut self, channel: u8, immediate: bool) {
-        self.note_off_all_channel_worker(i32::from(channel), immediate);
-    }
-
-    fn note_off_all_channel_worker(&mut self, channel: i32, immediate: bool) {
         if immediate {
             for voice in self.voices.get_active_voices().iter_mut() {
                 if voice.channel() == channel {
@@ -447,11 +431,7 @@ impl Synthesizer {
     ///
     /// * `channel` - The channel to be reset.
     pub fn reset_all_controllers_channel(&mut self, channel: u8) {
-        self.reset_all_controllers_channel_worker(i32::from(channel));
-    }
-
-    fn reset_all_controllers_channel_worker(&mut self, channel: i32) {
-        if !(0 <= channel && channel < self.channels.len() as i32) {
+        if usize::from(channel) >= self.channels.len() {
             return;
         }
 
@@ -680,8 +660,8 @@ impl Synthesizer {
     }
 
     /// Gets the bank and patch numbers channel `channel` last selected.
-    pub fn channel_bank_patch(&self, channel: usize) -> Option<(i32, i32)> {
-        let channel_info = self.channels.get(channel)?;
+    pub fn channel_bank_patch(&self, channel: u8) -> Option<(i32, i32)> {
+        let channel_info = self.channels.get(usize::from(channel))?;
         Some((
             channel_info.get_bank_number(),
             channel_info.get_patch_number(),
@@ -689,8 +669,8 @@ impl Synthesizer {
     }
 
     /// Gets the raw value of controller `controller` on `channel`.
-    pub fn channel_cc(&self, channel: usize, controller: u8) -> Option<u8> {
-        Some(self.channels.get(channel)?.get_cc(controller))
+    pub fn channel_cc(&self, channel: u8, controller: u8) -> Option<u8> {
+        Some(self.channels.get(usize::from(channel))?.get_cc(controller))
     }
 
     /// Gets the peak amplitude of the voices sounding on each channel:
@@ -747,9 +727,8 @@ impl Synthesizer {
     /// A channel's GS NRPN value in wire terms (64 = neutral for the
     /// relative parameters).
     pub fn channel_nrpn_wire(&self, channel: u8, msb: u8, lsb: u8) -> u8 {
-        let channel = i32::from(channel);
         self.channels
-            .get(channel as usize)
+            .get(usize::from(channel))
             .map(|c| c.nrpn_wire_value(msb, lsb))
             .unwrap_or(64)
     }
@@ -804,9 +783,8 @@ impl Synthesizer {
 
     /// Whether `channel` is a drum part.
     pub fn is_percussion(&self, channel: u8) -> bool {
-        let channel = i32::from(channel);
         self.channels
-            .get(channel as usize)
+            .get(usize::from(channel))
             .is_some_and(|c| c.is_percussion_channel)
     }
 
@@ -814,108 +792,95 @@ impl Synthesizer {
     /// notes and puts the part on the mode's first instrument, exactly
     /// as the unit's Part Mode switch does.
     pub fn set_percussion(&mut self, channel: u8, on: bool) {
-        let channel = i32::from(channel);
-        if !(0 <= channel && channel < self.channels.len() as i32) {
+        if usize::from(channel) >= self.channels.len() {
             return;
         }
-        if self.channels[channel as usize].is_percussion_channel == on {
+        if self.channels[usize::from(channel)].is_percussion_channel == on {
             return;
         }
-        self.note_off_all_channel_worker(channel, true);
-        self.channels[channel as usize].set_percussion(on);
+        self.note_off_all_channel(channel, true);
+        self.channels[usize::from(channel)].set_percussion(on);
     }
 
     /// The part's playable window.
     pub fn channel_key_range(&self, channel: u8) -> (u8, u8) {
-        let channel = i32::from(channel);
         self.channels
-            .get(channel as usize)
+            .get(usize::from(channel))
             .map(|c| c.key_range())
             .unwrap_or((0, 127))
     }
 
     pub fn set_channel_key_range(&mut self, channel: u8, lo: u8, hi: u8) {
-        let channel = i32::from(channel);
-        if let Some(c) = self.channels.get_mut(channel as usize) {
+        if let Some(c) = self.channels.get_mut(usize::from(channel)) {
             c.set_key_range(lo, hi);
         }
     }
 
     /// The part's velocity curve (depth, offset).
     pub fn channel_velo_sens(&self, channel: u8) -> (u8, u8) {
-        let channel = i32::from(channel);
         self.channels
-            .get(channel as usize)
+            .get(usize::from(channel))
             .map(|c| c.velo_sens())
             .unwrap_or((64, 64))
     }
 
     pub fn set_channel_velo_sens(&mut self, channel: u8, depth: u8, offset: u8) {
-        let channel = i32::from(channel);
-        if let Some(c) = self.channels.get_mut(channel as usize) {
+        if let Some(c) = self.channels.get_mut(usize::from(channel)) {
             c.set_velo_sens(depth, offset);
         }
     }
 
     /// The part's bend range in semitones, signed.
     pub fn channel_bend_range(&self, channel: u8) -> i8 {
-        let channel = i32::from(channel);
         self.channels
-            .get(channel as usize)
+            .get(usize::from(channel))
             .map(|c| c.bend_range_semitones())
             .unwrap_or(2)
     }
 
     pub fn set_channel_bend_range(&mut self, channel: u8, semitones: i8) {
-        let channel = i32::from(channel);
-        if let Some(c) = self.channels.get_mut(channel as usize) {
+        if let Some(c) = self.channels.get_mut(usize::from(channel)) {
             c.set_bend_range_semitones(semitones);
         }
     }
 
     /// The part's fine tune, the panel's -12..=+12.
     pub fn channel_fine_tune_display(&self, channel: u8) -> i8 {
-        let channel = i32::from(channel);
         self.channels
-            .get(channel as usize)
+            .get(usize::from(channel))
             .map(|c| c.fine_tune_display())
             .unwrap_or(0)
     }
 
     pub fn set_channel_fine_tune_display(&mut self, channel: u8, value: i8) {
-        let channel = i32::from(channel);
-        if let Some(c) = self.channels.get_mut(channel as usize) {
+        if let Some(c) = self.channels.get_mut(usize::from(channel)) {
             c.set_fine_tune_display(value);
         }
     }
 
     /// Whether the part plays one note at a time.
     pub fn channel_mono(&self, channel: u8) -> bool {
-        let channel = i32::from(channel);
         self.channels
-            .get(channel as usize)
+            .get(usize::from(channel))
             .is_some_and(|c| c.mono())
     }
 
     pub fn set_channel_mono(&mut self, channel: u8, mono: bool) {
-        let channel = i32::from(channel);
-        if let Some(c) = self.channels.get_mut(channel as usize) {
+        if let Some(c) = self.channels.get_mut(usize::from(channel)) {
             c.set_mono_mode(mono);
         }
     }
 
     /// The part's modulation depth.
     pub fn channel_mod_depth(&self, channel: u8) -> u8 {
-        let channel = i32::from(channel);
         self.channels
-            .get(channel as usize)
+            .get(usize::from(channel))
             .map(|c| c.mod_depth())
             .unwrap_or(10)
     }
 
     pub fn set_channel_mod_depth(&mut self, channel: u8, depth: u8) {
-        let channel = i32::from(channel);
-        if let Some(c) = self.channels.get_mut(channel as usize) {
+        if let Some(c) = self.channels.get_mut(usize::from(channel)) {
             c.set_mod_depth(depth);
         }
     }

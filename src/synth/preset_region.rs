@@ -115,7 +115,10 @@ impl PresetRegion {
     ///
     /// * `key` - The key of a note.
     /// * `velocity` - The velocity of a note.
-    pub fn contains(&self, key: i32, velocity: i32) -> bool {
+    pub fn contains(&self, key: u8, velocity: u8) -> bool {
+        // The note is a byte; the ranges are SF2 generators and stay in
+        // the font's own signed domain.
+        let (key, velocity) = (i32::from(key), i32::from(velocity));
         let contains_key = self.get_key_range_start() <= key && key <= self.get_key_range_end();
         let contains_velocity = self.get_velocity_range_start() <= velocity
             && velocity <= self.get_velocity_range_end();

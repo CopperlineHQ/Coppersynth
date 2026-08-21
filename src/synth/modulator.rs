@@ -186,16 +186,16 @@ impl ModSource {
 pub(crate) fn source_raw(
     source: ModSource,
     channel: &crate::synth::channel::Channel,
-    key: i32,
-    velocity: i32,
+    key: u8,
+    velocity: u8,
 ) -> f32 {
     if source.is_cc {
         return channel.get_cc(source.index) as f32 / 127.0;
     }
     match source.index {
         general_controller::NONE => 1.0,
-        general_controller::NOTE_ON_VELOCITY => velocity as f32 / 127.0,
-        general_controller::NOTE_ON_KEY => key as f32 / 127.0,
+        general_controller::NOTE_ON_VELOCITY => f32::from(velocity) / 127.0,
+        general_controller::NOTE_ON_KEY => f32::from(key) / 127.0,
         general_controller::POLY_PRESSURE => channel.get_poly_pressure(key) as f32 / 127.0,
         general_controller::CHANNEL_PRESSURE => channel.get_channel_pressure() as f32 / 127.0,
         general_controller::PITCH_WHEEL => channel.get_pitch_bend_raw(),
@@ -210,8 +210,8 @@ impl Modulator {
     pub(crate) fn contribution(
         &self,
         channel: &crate::synth::channel::Channel,
-        key: i32,
-        velocity: i32,
+        key: u8,
+        velocity: u8,
     ) -> f32 {
         let primary = ModSource::from_operator(self.source);
         let mut value = source_raw(primary, channel, key, velocity);
@@ -245,7 +245,7 @@ impl Modulator {
     /// The contribution of a modulator whose sources are all fixed at
     /// note-on. Sources that would need live channel state read as zero,
     /// so this is only meaningful for modulators [`is_static`] accepts.
-    pub(crate) fn static_contribution(&self, key: i32, velocity: i32) -> f32 {
+    pub(crate) fn static_contribution(&self, key: u8, velocity: u8) -> f32 {
         let fixed = |op: u16| {
             let m = ModSource::from_operator(op);
             let raw = if m.is_cc {
@@ -253,8 +253,8 @@ impl Modulator {
             } else {
                 match m.index {
                     general_controller::NONE => 1.0,
-                    general_controller::NOTE_ON_VELOCITY => velocity as f32 / 127.0,
-                    general_controller::NOTE_ON_KEY => key as f32 / 127.0,
+                    general_controller::NOTE_ON_VELOCITY => f32::from(velocity) / 127.0,
+                    general_controller::NOTE_ON_KEY => f32::from(key) / 127.0,
                     _ => 0.0,
                 }
             };

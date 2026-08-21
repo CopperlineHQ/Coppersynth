@@ -515,8 +515,8 @@ impl Engine {
 
     /// Everything the panel shows about `part`, read live.
     pub fn part_view(&self, part: usize) -> PartView {
-        let (bank, patch) = self.synth.channel_bank_patch(part).unwrap_or((0, 0));
-        let cc = |controller| self.synth.channel_cc(part, controller).unwrap_or(0);
+        let (bank, patch) = self.synth.channel_bank_patch(part as u8).unwrap_or((0, 0));
+        let cc = |controller| self.synth.channel_cc(part as u8, controller).unwrap_or(0);
         // Translating, the part wears the MT-32 timbre's name -- unless
         // the panel has taken the program over, in which case the glass
         // must name what is actually loaded, or the edit looks ignored.
@@ -569,7 +569,7 @@ impl Engine {
         }
         let current = self
             .synth
-            .channel_bank_patch(part)
+            .channel_bank_patch(part as u8)
             .map(|(_, patch)| patch as u8)
             .unwrap_or(0);
         // Where the current program sits, or would sit; a step then
@@ -590,7 +590,7 @@ impl Engine {
     /// wraparound; `None` on a drum part (kits ignore banks) or when
     /// the font has nothing to walk.
     pub fn neighbour_variation(&self, part: usize, step: i32) -> Option<u8> {
-        let (bank, patch) = self.synth.channel_bank_patch(part)?;
+        let (bank, patch) = self.synth.channel_bank_patch(part as u8)?;
         if bank >= 128 {
             return None;
         }
@@ -619,7 +619,7 @@ impl Engine {
     /// Put the part on a variation bank of its current instrument, the
     /// wire's own way: bank select completed by the program change.
     pub fn set_part_variation(&mut self, part: usize, bank: u8) {
-        let (_, patch) = self.synth.channel_bank_patch(part).unwrap_or((0, 0));
+        let (_, patch) = self.synth.channel_bank_patch(part as u8).unwrap_or((0, 0));
         self.synth.process_midi_message(part as u8, 0xB0, 0, bank);
         self.synth
             .process_midi_message(part as u8, 0xC0, patch.clamp(0, 127) as u8, 0);
@@ -627,7 +627,7 @@ impl Engine {
 
     /// The part's current bank, 0-127, for the variation display.
     pub fn part_bank(&self, part: usize) -> u8 {
-        let (bank, _) = self.synth.channel_bank_patch(part).unwrap_or((0, 0));
+        let (bank, _) = self.synth.channel_bank_patch(part as u8).unwrap_or((0, 0));
         (bank & 0x7F) as u8
     }
 
@@ -645,7 +645,12 @@ impl Engine {
     /// One setting across a part, cheap: no name lookup. What the ALL
     /// screen scans sixteen of.
     pub fn part_setting(&self, part: usize, pair: PartSetting) -> i32 {
-        let cc = |controller| self.synth.channel_cc(part, controller).unwrap_or(0).into();
+        let cc = |controller| {
+            self.synth
+                .channel_cc(part as u8, controller)
+                .unwrap_or(0)
+                .into()
+        };
         match pair {
             PartSetting::Level => self
                 .parts
@@ -714,7 +719,7 @@ impl Engine {
                 .process_midi_message(DRUM_PART as u8, 0xC0, 127, 0);
         } else if self
             .synth
-            .channel_bank_patch(DRUM_PART)
+            .channel_bank_patch(DRUM_PART as u8)
             .is_some_and(|(_, patch)| patch == 127)
         {
             self.synth.process_midi_message(DRUM_PART as u8, 0xC0, 0, 0);
@@ -780,7 +785,7 @@ impl Engine {
     /// A raw controller value as the part last received it, for the
     /// fascia's part-parameter editor.
     pub fn part_cc_value(&self, part: usize, controller: u8) -> u8 {
-        self.synth.channel_cc(part, controller).unwrap_or(0)
+        self.synth.channel_cc(part as u8, controller).unwrap_or(0)
     }
 
     /// A GS NRPN's current value in wire terms (relative parameters
@@ -1254,8 +1259,8 @@ impl Engine {
         out.extend_from_slice(&self.master_tune_tenths.to_le_bytes());
         // Every part in full.
         for part in 0..PARTS {
-            let (bank, patch) = self.synth.channel_bank_patch(part).unwrap_or((0, 0));
-            let cc = |controller| self.synth.channel_cc(part, controller).unwrap_or(0);
+            let (bank, patch) = self.synth.channel_bank_patch(part as u8).unwrap_or((0, 0));
+            let cc = |controller| self.synth.channel_cc(part as u8, controller).unwrap_or(0);
             let (lo, hi) = self.part_key_range(part);
             let (depth, offset) = self.part_velo_sens(part);
             out.push(self.parts.rx_channel[part].map_or(0xFF, |c| c));
