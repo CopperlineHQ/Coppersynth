@@ -230,7 +230,8 @@ impl Channel {
         self.cc[64] = 0;
     }
 
-    pub(crate) fn set_bank(&mut self, value: i32) {
+    pub(crate) fn set_bank(&mut self, value: u8) {
+        let value = i32::from(value);
         // The unit suspends bank select until the program change that
         // completes it; a bank sent on its own must not retarget notes
         // already choosing presets. (Drum parts ignore it outright.)
@@ -240,50 +241,51 @@ impl Channel {
         self.pending_bank = Some(value);
     }
 
-    pub(crate) fn set_patch(&mut self, value: i32) {
+    pub(crate) fn set_patch(&mut self, value: u8) {
+        let value = i32::from(value);
         if let Some(bank) = self.pending_bank.take() {
             self.bank_number = bank;
         }
         self.patch_number = value;
     }
 
-    pub(crate) fn set_modulation_coarse(&mut self, value: i32) {
-        self.modulation = (self.modulation & 0x7F) | (value << 7) as i16;
+    pub(crate) fn set_modulation_coarse(&mut self, value: u8) {
+        self.modulation = (self.modulation & 0x7F) | ((i32::from(value)) << 7) as i16;
     }
 
-    pub(crate) fn set_modulation_fine(&mut self, value: i32) {
-        self.modulation = (((self.modulation as i32) & 0xFF80) | value) as i16;
+    pub(crate) fn set_modulation_fine(&mut self, value: u8) {
+        self.modulation = (((self.modulation as i32) & 0xFF80) | i32::from(value)) as i16;
     }
 
-    pub(crate) fn set_volume_coarse(&mut self, value: i32) {
-        self.volume = (self.volume & 0x7F) | (value << 7) as i16;
+    pub(crate) fn set_volume_coarse(&mut self, value: u8) {
+        self.volume = (self.volume & 0x7F) | ((i32::from(value)) << 7) as i16;
     }
 
-    pub(crate) fn set_volume_fine(&mut self, value: i32) {
-        self.volume = (((self.volume as i32) & 0xFF80) | value) as i16;
+    pub(crate) fn set_volume_fine(&mut self, value: u8) {
+        self.volume = (((self.volume as i32) & 0xFF80) | i32::from(value)) as i16;
     }
 
-    pub(crate) fn set_pan_coarse(&mut self, value: i32) {
-        self.pan = (self.pan & 0x7F) | (value << 7) as i16;
+    pub(crate) fn set_pan_coarse(&mut self, value: u8) {
+        self.pan = (self.pan & 0x7F) | ((i32::from(value)) << 7) as i16;
     }
 
-    pub(crate) fn set_pan_fine(&mut self, value: i32) {
-        self.pan = (((self.pan as i32) & 0xFF80) | value) as i16;
+    pub(crate) fn set_pan_fine(&mut self, value: u8) {
+        self.pan = (((self.pan as i32) & 0xFF80) | i32::from(value)) as i16;
     }
 
-    pub(crate) fn set_expression_coarse(&mut self, value: i32) {
-        self.expression = (self.expression & 0x7F) | (value << 7) as i16;
+    pub(crate) fn set_expression_coarse(&mut self, value: u8) {
+        self.expression = (self.expression & 0x7F) | ((i32::from(value)) << 7) as i16;
     }
 
-    pub(crate) fn set_expression_fine(&mut self, value: i32) {
-        self.expression = (((self.expression as i32) & 0xFF80) | value) as i16;
+    pub(crate) fn set_expression_fine(&mut self, value: u8) {
+        self.expression = (((self.expression as i32) & 0xFF80) | i32::from(value)) as i16;
     }
 
-    pub(crate) fn set_hold_pedal(&mut self, value: i32) {
+    pub(crate) fn set_hold_pedal(&mut self, value: u8) {
         self.hold_pedal = value >= 64;
     }
 
-    pub(crate) fn set_sostenuto_pedal(&mut self, value: i32) {
+    pub(crate) fn set_sostenuto_pedal(&mut self, value: u8) {
         self.sostenuto_pedal = value >= 64;
     }
 
@@ -291,7 +293,7 @@ impl Channel {
         self.sostenuto_pedal
     }
 
-    pub(crate) fn set_soft_pedal(&mut self, value: i32) {
+    pub(crate) fn set_soft_pedal(&mut self, value: u8) {
         self.soft_pedal = value >= 64;
     }
 
@@ -299,7 +301,7 @@ impl Channel {
         self.soft_pedal
     }
 
-    pub(crate) fn set_portamento_pedal(&mut self, value: i32) {
+    pub(crate) fn set_portamento_pedal(&mut self, value: u8) {
         self.portamento_pedal = value >= 64;
     }
 
@@ -307,24 +309,24 @@ impl Channel {
         self.portamento_pedal
     }
 
-    pub(crate) fn set_portamento_time(&mut self, value: i32) {
-        self.portamento_time = value as u8;
+    pub(crate) fn set_portamento_time(&mut self, value: u8) {
+        self.portamento_time = value;
     }
 
     pub(crate) fn get_portamento_time(&self) -> u8 {
         self.portamento_time
     }
 
-    pub(crate) fn set_last_key(&mut self, key: i32) {
-        self.last_key = Some(key as u8);
+    pub(crate) fn set_last_key(&mut self, key: u8) {
+        self.last_key = Some(key);
     }
 
     pub(crate) fn get_last_key(&self) -> Option<u8> {
         self.last_key
     }
 
-    pub(crate) fn set_portamento_source(&mut self, key: i32) {
-        self.portamento_source = Some(key as u8);
+    pub(crate) fn set_portamento_source(&mut self, key: u8) {
+        self.portamento_source = Some(key);
     }
 
     pub(crate) fn take_portamento_source(&mut self) -> Option<u8> {
@@ -339,49 +341,54 @@ impl Channel {
         self.mono_mode
     }
 
-    pub(crate) fn set_channel_pressure(&mut self, value: i32) {
-        self.channel_pressure = value as u8;
+    pub(crate) fn set_channel_pressure(&mut self, value: u8) {
+        self.channel_pressure = value;
     }
 
     pub(crate) fn get_channel_pressure(&self) -> u8 {
         self.channel_pressure
     }
 
-    pub(crate) fn set_poly_pressure(&mut self, key: i32, value: i32) {
-        if (0..128).contains(&key) {
-            self.poly_pressure[key as usize] = value as u8;
+    pub(crate) fn set_poly_pressure(&mut self, key: u8, value: u8) {
+        // A byte still reaches 255: the table is 7-bit, so the guard
+        // stays.
+        if key < 128 {
+            self.poly_pressure[usize::from(key)] = value;
         }
     }
 
-    pub(crate) fn get_poly_pressure(&self, key: i32) -> u8 {
-        self.poly_pressure.get(key as usize).copied().unwrap_or(0)
+    pub(crate) fn get_poly_pressure(&self, key: u8) -> u8 {
+        self.poly_pressure
+            .get(usize::from(key))
+            .copied()
+            .unwrap_or(0)
     }
 
-    pub(crate) fn set_reverb_send(&mut self, value: i32) {
-        self.reverb_send = value as u8;
+    pub(crate) fn set_reverb_send(&mut self, value: u8) {
+        self.reverb_send = value;
     }
 
-    pub(crate) fn set_chorus_send(&mut self, value: i32) {
-        self.chorus_send = value as u8;
+    pub(crate) fn set_chorus_send(&mut self, value: u8) {
+        self.chorus_send = value;
     }
 
-    pub(crate) fn set_rpn_coarse(&mut self, value: i32) {
-        self.rpn = (self.rpn & 0x7F) | (value << 7) as i16;
+    pub(crate) fn set_rpn_coarse(&mut self, value: u8) {
+        self.rpn = (self.rpn & 0x7F) | ((i32::from(value)) << 7) as i16;
         self.last_data_type = DataType::Rpn;
     }
 
-    pub(crate) fn set_rpn_fine(&mut self, value: i32) {
-        self.rpn = (((self.rpn as i32) & 0xFF80) | value) as i16;
+    pub(crate) fn set_rpn_fine(&mut self, value: u8) {
+        self.rpn = (((self.rpn as i32) & 0xFF80) | i32::from(value)) as i16;
         self.last_data_type = DataType::Rpn;
     }
 
-    pub(crate) fn set_nrpn_coarse(&mut self, value: i32) {
-        self.nrpn = (self.nrpn & 0x7F) | (value << 7) as i16;
+    pub(crate) fn set_nrpn_coarse(&mut self, value: u8) {
+        self.nrpn = (self.nrpn & 0x7F) | ((i32::from(value)) << 7) as i16;
         self.last_data_type = DataType::Nrpn;
     }
 
-    pub(crate) fn set_nrpn_fine(&mut self, value: i32) {
-        self.nrpn = (((self.nrpn as i32) & 0xFF80) | value) as i16;
+    pub(crate) fn set_nrpn_fine(&mut self, value: u8) {
+        self.nrpn = (((self.nrpn as i32) & 0xFF80) | i32::from(value)) as i16;
         self.last_data_type = DataType::Nrpn;
     }
 
@@ -476,22 +483,22 @@ impl Channel {
     }
 
     /// A drum note's pitch offset in semitones.
-    pub(crate) fn drum_pitch_semitones(&self, key: i32) -> f32 {
+    pub(crate) fn drum_pitch_semitones(&self, key: u8) -> f32 {
         if !self.is_percussion_channel {
             return 0_f32;
         }
         self.drum_pitch
-            .get(key as usize)
+            .get(usize::from(key))
             .map(|&p| p as f32)
             .unwrap_or(0_f32)
     }
 
     /// A drum note's TVA level as a gain (GM's squared curve).
-    pub(crate) fn drum_level_gain(&self, key: i32) -> f32 {
+    pub(crate) fn drum_level_gain(&self, key: u8) -> f32 {
         if !self.is_percussion_channel {
             return 1_f32;
         }
-        match self.drum_level.get(key as usize).copied().flatten() {
+        match self.drum_level.get(usize::from(key)).copied().flatten() {
             Some(level) => {
                 let v = level as f32 / 127.0;
                 v * v
@@ -503,15 +510,15 @@ impl Channel {
     /// A drum note's pan override in the instrument's -50..+50 units.
     /// 0 on the wire means random placement; a deterministic scatter
     /// derived from the note keeps renders reproducible.
-    pub(crate) fn drum_pan_override(&self, key: i32, velocity: i32) -> Option<f32> {
+    pub(crate) fn drum_pan_override(&self, key: u8, velocity: u8) -> Option<f32> {
         if !self.is_percussion_channel {
             return None;
         }
-        let raw = self.drum_pan.get(key as usize).copied().flatten()?;
+        let raw = self.drum_pan.get(usize::from(key)).copied().flatten()?;
         if raw == 0 {
-            let hash = (key as u32)
+            let hash = u32::from(key)
                 .wrapping_mul(2654435761)
-                .wrapping_add(velocity as u32)
+                .wrapping_add(u32::from(velocity))
                 .wrapping_mul(40503);
             return Some((hash >> 16) as f32 % 101.0 - 50.0);
         }
@@ -519,10 +526,10 @@ impl Channel {
     }
 
     /// The part reverb send scaled by a drum note's multiplicand.
-    pub(crate) fn get_reverb_send_for(&self, key: i32) -> f32 {
+    pub(crate) fn get_reverb_send_for(&self, key: u8) -> f32 {
         let mult = if self.is_percussion_channel {
             self.drum_reverb
-                .get(key as usize)
+                .get(usize::from(key))
                 .copied()
                 .flatten()
                 .map(|v| v as f32 / 127.0)
@@ -534,10 +541,10 @@ impl Channel {
     }
 
     /// The part chorus send scaled by a drum note's multiplicand.
-    pub(crate) fn get_chorus_send_for(&self, key: i32) -> f32 {
+    pub(crate) fn get_chorus_send_for(&self, key: u8) -> f32 {
         let mult = if self.is_percussion_channel {
             self.drum_chorus
-                .get(key as usize)
+                .get(usize::from(key))
                 .copied()
                 .flatten()
                 .map(|v| v as f32 / 127.0)
@@ -548,7 +555,10 @@ impl Channel {
         self.get_chorus_send() * mult
     }
 
-    pub(crate) fn data_entry_coarse(&mut self, value: i32) {
+    pub(crate) fn data_entry_coarse(&mut self, value: u8) {
+        // The tone modifies are relative about 40H and the tuning maths
+        // assembles 14-bit words: signed from here on.
+        let value = i32::from(value);
         if self.last_data_type == DataType::Nrpn {
             self.nrpn_data_entry(value);
             return;
@@ -566,7 +576,8 @@ impl Channel {
         }
     }
 
-    pub(crate) fn data_entry_fine(&mut self, value: i32) {
+    pub(crate) fn data_entry_fine(&mut self, value: u8) {
+        let value = i32::from(value);
         if self.last_data_type != DataType::Rpn {
             return;
         }
@@ -578,7 +589,10 @@ impl Channel {
         }
     }
 
-    pub(crate) fn set_pitch_bend(&mut self, value1: i32, value2: i32) {
+    pub(crate) fn set_pitch_bend(&mut self, value1: u8, value2: u8) {
+        // Fourteen bits centred on 8192: the wheel below centre is a
+        // negative number, so the assembly is signed.
+        let (value1, value2) = (i32::from(value1), i32::from(value2));
         self.pitch_bend = (1_f32 / 8192_f32) * ((value1 | (value2 << 7)) - 8192) as f32;
     }
 
@@ -593,9 +607,11 @@ impl Channel {
     /// Record a controller's raw value for the modulator sources. Called
     /// for every incoming CC, named or not, before the switch that feeds
     /// the named fields.
-    pub(crate) fn set_cc(&mut self, controller: i32, value: i32) {
-        if (0..128).contains(&controller) {
-            self.cc[controller as usize] = value as u8;
+    pub(crate) fn set_cc(&mut self, controller: u8, value: u8) {
+        // A byte still reaches 255 and the table is 7-bit: the guard
+        // stays.
+        if controller < 128 {
+            self.cc[usize::from(controller)] = value;
         }
     }
 
@@ -714,10 +730,12 @@ impl Channel {
     /// The received velocity through the part's sensitivity curve:
     /// depth tilts the slope about the centre, offset lifts or sinks
     /// the floor, 64/64 passing the wire through untouched.
-    pub(crate) fn shaped_velocity(&self, velocity: i32) -> i32 {
+    pub(crate) fn shaped_velocity(&self, velocity: u8) -> u8 {
+        // The intermediate runs past both ends of the byte on purpose;
+        // the clamp is the note's floor and ceiling.
         let shaped =
-            velocity as f32 * self.velo_depth as f32 / 64.0 + (self.velo_offset as f32 - 64.0);
-        (shaped as i32).clamp(1, 127)
+            f32::from(velocity) * self.velo_depth as f32 / 64.0 + (self.velo_offset as f32 - 64.0);
+        (shaped as i32).clamp(1, 127) as u8
     }
 
     pub(crate) fn mod_depth(&self) -> u8 {

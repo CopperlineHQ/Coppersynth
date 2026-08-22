@@ -68,9 +68,12 @@ pub(crate) struct Voice {
     pub(crate) current_chorus_send: f32,
 
     exclusive_class: i32,
-    channel: i32,
-    key: i32,
-    velocity: i32,
+    // The note's identity, as the bytes that named it. The pitch maths
+    // works in f32 and the envelope scaling in i32; each widens where
+    // it computes rather than carrying a wider identity around.
+    channel: u8,
+    key: u8,
+    velocity: u8,
 
     note_gain: f32,
 
@@ -195,16 +198,17 @@ impl Voice {
 
     /// Begin this voice gliding in from another key (portamento, or a
     /// Portamento Control message ahead of the note).
-    pub(crate) fn glide_from(&mut self, source_key: i32, decay_per_block: f32) {
-        self.glide_offset = source_key as f32 - self.key as f32;
+    pub(crate) fn glide_from(&mut self, source_key: u8, decay_per_block: f32) {
+        // A signed distance in semitones: gliding down is negative.
+        self.glide_offset = f32::from(source_key) - f32::from(self.key);
         self.glide_decay = decay_per_block;
     }
 
     /// Portamento Control onto a sounding voice: re-tune to the new
     /// key, gliding from wherever the pitch is now, without
     /// re-triggering -- the manual's legato case.
-    pub(crate) fn retune_to(&mut self, new_key: i32, decay_per_block: f32) {
-        self.glide_offset += self.key as f32 - new_key as f32;
+    pub(crate) fn retune_to(&mut self, new_key: u8, decay_per_block: f32) {
+        self.glide_offset += f32::from(self.key) - f32::from(new_key);
         self.key = new_key;
         self.glide_decay = decay_per_block;
     }
@@ -219,9 +223,9 @@ impl Voice {
         &mut self,
         region: &RegionPair,
         channel_info: &Channel,
-        channel: i32,
-        key: i32,
-        velocity: i32,
+        channel: u8,
+        key: u8,
+        velocity: u8,
     ) {
         self.exclusive_class = region.get_exclusive_class();
         self.channel = channel;
@@ -424,7 +428,7 @@ impl Voice {
             return false;
         }
 
-        let channel_info = &channels[self.channel as usize];
+        let channel_info = &channels[usize::from(self.channel)];
 
         self.update_dynamic_mods(channel_info);
 
@@ -443,7 +447,7 @@ impl Voice {
         let mod_pitch_change = self.mod_lfo_to_pitch * self.mod_lfo.get_value()
             + self.mod_env_to_pitch * self.mod_env.get_value();
         let channel_pitch_change = channel_info.get_tune() + channel_info.get_pitch_bend();
-        let pitch = self.key as f32
+        let pitch = f32::from(self.key)
             + self.drum_pitch
             + self.glide_offset
             + vib_pitch_change
@@ -611,11 +615,11 @@ impl Voice {
         self.exclusive_class
     }
 
-    pub(crate) fn channel(&self) -> i32 {
+    pub(crate) fn channel(&self) -> u8 {
         self.channel
     }
 
-    pub(crate) fn key(&self) -> i32 {
+    pub(crate) fn key(&self) -> u8 {
         self.key
     }
 
