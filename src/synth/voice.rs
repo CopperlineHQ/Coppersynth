@@ -26,6 +26,43 @@ enum VoiceState {
     Released = 2,
 }
 
+/// How much of the spec's attenuation reaches a voice.
+///
+/// Two fifths, a figure from Polyphone by way of rustysynth, whose
+/// author wrote "I'm not sure why, but this indeed improves the
+/// loudness variability". It reads like a fudge, and applying
+/// attenuation whole was tried on the strength of that -- the
+/// reference player's own arithmetic is `10^(-cb/200)`, the whole of
+/// it, with no such factor anywhere.
+///
+/// It is not a fudge. Rendered against that player, note for note over
+/// all 128 programs of the bundled bank, two fifths puts this unit's
+/// balance within 0.8 dB of it and 123 of the 128 programs within two;
+/// applying attenuation whole moves it to 4.2 dB out with only 39
+/// programs inside two. Something else in how the two compose a voice
+/// differs by this much, and until that is found this is the figure
+/// that agrees with the reference. `tests/fluidsynth_balance.rs` is
+/// the measurement.
+///
+/// Named rather than written twice in the middle of the arithmetic,
+/// because it is the kind of number that gets changed by ear.
+const ATTENUATION_WEIGHT: f32 = 0.4_f32;
+
+/// Pin a total attenuation to the range the spec allows: SF2 2.04
+/// s8.1.3 generator 48, 0 to 1440 cB. Below zero is a boost, which the
+/// spec does not offer and the reference player refuses.
+///
+/// The *total*, and only the total. A preset's generators are offsets
+/// on its instrument's, so a preset storing a negative attenuation is
+/// saying "this one sits above the instrument's own level" -- ordinary
+/// balancing, and 243 of the bundled bank's presets do it. Ranging
+/// those where they are stored throws that balance away; ranging what
+/// they add up to is what the spec means and what the reference player
+/// does.
+fn clamp_attenuation_cb(cb: f32) -> f32 {
+    cb.clamp(0_f32, 1440_f32)
+}
+
 #[derive(Debug)]
 #[non_exhaustive]
 pub(crate) struct Voice {
@@ -112,6 +149,12 @@ pub(crate) struct Voice {
     /// The hard-coded velocity curve is replaced when the bank supersedes
     /// the spec's default velocity-to-attenuation routing.
     vel_atten_superseded: bool,
+    /// Everything the spec calls attenuation, in centibels, that is
+    /// settled when the note starts: the region's own, the velocity's,
+    /// and the static modulators'. Kept as a figure rather than folded
+    /// into a gain so the dynamic modulators can be added to it and the
+    /// total clamped, which is where the range check belongs.
+    atten_static_cb: f32,
     /// A bank modulator drives this send, so the synthesizer's own
     /// channel-CC scaling must stand aside for it.
     reverb_from_mods: bool,
@@ -176,6 +219,7 @@ impl Voice {
             base_cutoff_cents: 0_f32,
             static_atten_cb: 0_f32,
             vel_atten_superseded: false,
+            atten_static_cb: 0_f32,
             reverb_from_mods: false,
             chorus_from_mods: false,
             dyn_atten_cb: 0_f32,
@@ -314,10 +358,6 @@ impl Voice {
         self.dyn_pan = 0_f32;
 
         if velocity > 0 {
-            // According to the Polyphone's implementation, the initial attenuation should be reduced to 40%.
-            // I'm not sure why, but this indeed improves the loudness variability.
-            let sample_attenuation = 0.4_f32 * region.get_initial_attenuation();
-            let filter_attenuation = 0.5_f32 * region.get_initial_filter_q();
             // A bank that supersedes the default velocity curve supplies
             // its own through the attenuation modulators; applying the
             // hard-coded one as well would count velocity twice.
@@ -326,9 +366,25 @@ impl Voice {
             } else {
                 2_f32 * SoundFontMath::linear_to_decibels(velocity as f32 / 127_f32)
             };
+            let sample_attenuation = ATTENUATION_WEIGHT * region.get_initial_attenuation();
+            // The filter's Q compensation is not attenuation and is not
+            // ranged with it, exactly as it is kept apart upstream.
+            let filter_attenuation = 0.5_f32 * region.get_initial_filter_q();
             let decibels = velocity_decibels - sample_attenuation - filter_attenuation;
             self.note_gain = SoundFontMath::decibels_to_linear(decibels);
+            // And the same thing again as one figure in centibels, which
+            // is what the range check needs: everything the spec calls
+            // attenuation, settled at note-on. Velocity is attenuation
+            // here as it is in the spec -- it reaches a voice as a
+            // modulator on this very generator -- so it counts. It has
+            // always been applied whole, though, and the weight above is
+            // a deviation rather than a rule, so the weight is not
+            // extended to cover it.
+            self.atten_static_cb = 10_f32
+                * (sample_attenuation - velocity_decibels
+                    + 0.1_f32 * ATTENUATION_WEIGHT * self.static_atten_cb);
         } else {
+            self.atten_static_cb = 0_f32;
             self.note_gain = 0_f32;
         }
 
@@ -498,10 +554,24 @@ impl Voice {
         let mod_atten_cb = self.static_atten_cb + self.dyn_atten_cb;
         if mod_atten_cb != 0_f32 {
             // Attenuation modulators land in centibels and are scaled by
-            // the same 0.4 the generator's own attenuation gets, so a bank
-            // that supersedes the velocity curve keeps its loudness
+            // the same weight the generator's own attenuation gets, so a
+            // bank that supersedes the velocity curve keeps its loudness
             // relationships.
-            mix_gain *= SoundFontMath::decibels_to_linear(-0.1_f32 * 0.4_f32 * mod_atten_cb);
+            mix_gain *=
+                SoundFontMath::decibels_to_linear(-0.1_f32 * ATTENUATION_WEIGHT * mod_atten_cb);
+        }
+        // Everything above composes the attenuation in pieces. The spec
+        // ranges the whole of it -- and so does the reference player,
+        // which clamps the generator's value plus its modulators plus
+        // its NRPN in one go -- because a modulator driving attenuation
+        // below zero asks for a boost just as surely as a bank storing
+        // one. So the total is gathered and checked, and what the check
+        // changes is applied on top. It is nothing at all, and costs a
+        // comparison, whenever the bank is within its rights.
+        let total_cb = self.atten_static_cb + ATTENUATION_WEIGHT * self.dyn_atten_cb;
+        let ranged_cb = clamp_attenuation_cb(total_cb);
+        if ranged_cb != total_cb {
+            mix_gain *= SoundFontMath::decibels_to_linear(-0.1_f32 * (ranged_cb - total_cb));
         }
         if self.dynamic_volume {
             let decibels = self.mod_lfo_to_volume * self.mod_lfo.get_value();
@@ -624,6 +694,35 @@ impl Voice {
             0_f32
         } else {
             self.vol_env.get_priority()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The spec ranges attenuation, and the reference player ranges the
+    /// whole of it -- generator plus modulators -- rather than the
+    /// pieces. Below zero is a boost, which is the shape of the bug this
+    /// guards: a modulator can ask for one just as a bank can.
+    #[test]
+    fn a_total_attenuation_is_pinned_to_the_range() {
+        assert_eq!(clamp_attenuation_cb(0.0), 0.0);
+        assert_eq!(clamp_attenuation_cb(1440.0), 1440.0);
+        assert_eq!(clamp_attenuation_cb(500.0), 500.0, "in range, untouched");
+        assert_eq!(clamp_attenuation_cb(-1.0), 0.0, "a boost is refused");
+        assert_eq!(clamp_attenuation_cb(-10000.0), 0.0, "however large");
+        assert_eq!(clamp_attenuation_cb(2000.0), 1440.0, "and so is silence");
+    }
+
+    /// The correction the block applies is nothing whenever the total is
+    /// within its rights, so a bank that behaves sounds exactly as it
+    /// did before the check existed.
+    #[test]
+    fn a_total_in_range_is_corrected_by_nothing() {
+        for total in [0.0_f32, 1.0, 240.0, 960.0, 1440.0] {
+            assert_eq!(clamp_attenuation_cb(total) - total, 0.0);
         }
     }
 }
