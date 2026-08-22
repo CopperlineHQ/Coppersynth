@@ -1,6 +1,6 @@
 [package]
 name = "coppersynth"
-version = "0.10.0"
+version = "0.14.0"
 authors = ["Lee Hobson"]
 edition = "2021"
 license = "MIT"
