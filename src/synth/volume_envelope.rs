@@ -28,6 +28,24 @@ pub(crate) struct VolumeEnvelope {
     priority: f32,
 }
 
+/// How far the decay and release segments fall across their nominal
+/// time, as the exponent wants it.
+///
+/// Both segments are straight lines in decibels; the only question is
+/// how many decibels. The figure inherited from rustysynth was 9.226,
+/// which is 80.1 dB -- where the reference player falls the whole of
+/// the spec's peak attenuation, 960 cB, over the same nominal time.
+/// A note held through its decay therefore sat a little louder here
+/// than it should, on every bank.
+///
+/// Measured both ways round: sweeping this figure against the
+/// reference over all 128 programs of the bundled bank puts the
+/// closest match at 96 dB, which is the value the reference's own
+/// arithmetic predicts. 80 dB scores 0.42, 88 scores 0.37, 96 scores
+/// 0.36, 104 scores 0.39. `tests/fluidsynth_balance.rs` is that
+/// measurement.
+const ENVELOPE_FALL: f64 = -96_f64 * std::f64::consts::LN_10 / 20_f64;
+
 impl VolumeEnvelope {
     pub(crate) fn new(settings: &SynthesizerSettings) -> Self {
         Self {
@@ -58,8 +76,8 @@ impl VolumeEnvelope {
         release: f32,
     ) {
         self.attack_slope = 1_f64 / attack as f64;
-        self.decay_slope = -9.226_f64 / decay as f64;
-        self.release_slope = -9.226_f64 / release as f64;
+        self.decay_slope = ENVELOPE_FALL / decay as f64;
+        self.release_slope = ENVELOPE_FALL / release as f64;
 
         self.attack_start_time = delay as f64;
         self.hold_start_time = self.attack_start_time + attack as f64;
