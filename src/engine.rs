@@ -242,9 +242,10 @@ impl Engine {
             .map_err(|e| format!("bundled bank: {e}"))?;
         let entry = (0..archive.len())
             .find(|&i| {
-                archive
-                    .by_index(i)
-                    .is_ok_and(|f| f.name().to_ascii_lowercase().ends_with(".sf2"))
+                archive.by_index(i).is_ok_and(|f| {
+                    f.name()
+                        .is_ok_and(|n| n.to_ascii_lowercase().ends_with(".sf2"))
+                })
             })
             .ok_or_else(|| "bundled bank: no .sf2 inside".to_string())?;
         let mut reader = archive

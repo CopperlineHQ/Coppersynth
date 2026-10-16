@@ -9,7 +9,7 @@ repository = "https://github.com/CopperlineHQ/Coppersynth"
 publish = false
 
 [dependencies]
-zip = { version = "8", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 
 [build-dependencies]
-zip = "8"
+zip = "9"
