@@ -1,0 +1,11 @@
+version: 2
+updates:
+  # Patch releases arrive as one consolidated PR; minor and major updates
+  # get a PR each.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      patch-updates:
+        update-types: ["patch"]
